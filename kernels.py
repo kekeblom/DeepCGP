@@ -28,8 +28,9 @@ class ConvKernel(gpflow.kernels.Kernel):
         :param X: N x height x width x color_channels
         :returns N x _patch_count x _patch_length
         """
-        # X: batch x height x width x channels
+        # X: batch x height * width * channels
         # returns: batch x height x width x channels * patches
+        X = self._reshape_X(X)
         patches = tf.extract_image_patches(X,
                 [1, self.window_size, self.window_size, 1],
                 [1, self.stride, self.stride, 1],
@@ -37,6 +38,17 @@ class ConvKernel(gpflow.kernels.Kernel):
                 "VALID")
         N = tf.shape(X)[0]
         return tf.reshape(patches, (N, self._patch_count, self._patch_length))
+
+    def _reshape_X(self, X):
+        """
+        Reshapes the input from N x D to N x image height x image width x channels
+
+        :param X: Tensorflow tensor of size N x D
+        :returns: Tensorflow tensor of size N x height x width x channels
+        """
+        X_shape = tf.shape(X)
+        return tf.reshape(X, (X_shape[0], *self.image_size, self.color_channels))
+
 
     def K(self, X, X2=None):
         patch_length = self._patch_length
@@ -82,10 +94,13 @@ class ConvKernel(gpflow.kernels.Kernel):
 
     def init_inducing_patches(self, X, M):
         # Randomly sample images and patches.
-        sample_size = 125
-        random_sample = _sample(X, sample_size)
-        patches = self.autoflow_patches(random_sample)
-        patches = patches.reshape(sample_size * self._patch_count, self._patch_length)
+        patches = np.zeros((M, self._patch_length), dtype=settings.float_type)
+        patches_per_image = 5
+        for i in range(M // patches_per_image):
+            # Sample a random image, compute the patches and sample some random patches.
+            image = _sample(X, 1)
+            image_patches = self.autoflow_patches(image).reshape(-1, self._patch_length)
+            patches[i*patches_per_image:(i+1)*patches_per_image] = _sample(image_patches, patches_per_image)
 
         k_means = cluster.KMeans(n_clusters=M,
                 init='random', n_jobs=-1)
