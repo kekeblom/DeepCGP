@@ -2,7 +2,14 @@ import numpy as np
 import tensorflow as tf
 import gpflow
 import observations
+from gpflow import settings
+from gpflow.features import InducingFeature
+from gpflow.params import Parameter
 from sklearn import cluster
+
+def _sample(tensor, count):
+    chosen_indices = np.random.choice(np.arange(tensor.shape[0]), count)
+    return tensor[chosen_indices]
 
 class ConvKernel(gpflow.kernels.Kernel):
     # Loosely based on https://github.com/markvdw/convgp/blob/master/convgp/convkernels.py
@@ -17,16 +24,23 @@ class ConvKernel(gpflow.kernels.Kernel):
         self.color_channels = channels
 
     def _get_patches(self, X):
+        """_get_patches
+
+        :param X: N x height x width x color_channels
+        :returns N x _patch_count x _patch_length
+        """
         # X: batch x height x width x channels
         # returns: batch x height x width x channels * patches
-        return tf.extract_image_patches(X,
+        patches = tf.extract_image_patches(X,
                 [1, self.window_size, self.window_size, 1],
                 [1, self.stride, self.stride, 1],
                 [1, self.dilation, self.dilation, 1],
                 "VALID")
+        N = tf.shape(X)[0]
+        return tf.reshape(patches, (N, self._patch_count, self._patch_length))
 
     def K(self, X, X2=None):
-        patch_length = self.color_channels * np.prod(self.patch_size)
+        patch_length = self._patch_length
         patches = tf.reshape(self._get_patches(X), [-1, patch_length])
 
         if X2 is None:
@@ -43,21 +57,78 @@ class ConvKernel(gpflow.kernels.Kernel):
         return K
 
     def Kdiag(self, X):
+        # patches: N x _patch_count x _patch_length
+        # Compute auto correlation in the patch space.
         patches = self._get_patches(X)
+
         def sumK(p):
             return tf.reduce_sum(self.base_kernel.K(p))
         return tf.map_fn(sumK, patches) / (self._patch_count ** 2)
 
+    def Kzx(self, Z, X):
+        # Patches: N x _patch_count x _patch_length
+        patches = self._get_patches(X)
+        patches = tf.reshape(patches, (-1, self._patch_length))
+        # Kzx shape: M x N * _patch_count
+        Kzx = self.base_kernel.K(Z, patches)
+        M = tf.shape(Z)[0]
+        N = tf.shape(X)[0]
+        # Reshape to M x N x _patch_count then sum over patches.
+        Kzx = tf.reshape(Kzx, (M, N, self._patch_count))
+        Kzx = tf.reduce_sum(Kzx, [2])
+        return Kzx / self._patch_count
+
+    def Kzz(self, Z):
+        return self.base_kernel.K(Z)
+
+    def init_inducing_patches(self, X, M):
+        # Randomly sample images and patches.
+        sample_size = 125
+        random_sample = _sample(X, sample_size)
+        patches = self.autoflow_patches(random_sample)
+        patches = patches.reshape(sample_size * self._patch_count, self._patch_length)
+
+        k_means = cluster.KMeans(n_clusters=M,
+                init='random', n_jobs=-1)
+        k_means.fit(patches)
+        return k_means.cluster_centers_.reshape(M, self._patch_length)
+
+    @property
+    def _patch_length(self):
+        """_patch_length: the number of elements in a patch."""
+        return self.color_channels * np.prod(self.patch_size)
+
     @property
     def _patch_count(self):
+        """_patch_count: the amount of patches in one image."""
         return (self.image_size[0] - self.patch_size[0] + 1) * (
                 self.image_size[1] - self.patch_size[1] + 1) * self.color_channels
+
+    @gpflow.autoflow((settings.float_type,))
+    def autoflow_patches(self, X):
+        return self._get_patches(X)
+
+class PatchInducingFeature(InducingFeature):
+    def __init__(self, Z):
+        super().__init__()
+        self.Z = Parameter(Z, dtype=settings.float_type)
+
+    def __len__(self):
+        return self.Z.shape[0]
+
+    def Kuu(self, kern, jitter=0.0):
+        return kern.Kzz(self.Z) + tf.eye(len(self), dtype=settings.dtypes.float_type) * jitter
+
+    def Kuf(self, kern, Xnew):
+        return kern.Kzx(self.Z, Xnew)
+
+gpflow.features.conditional.register(PatchInducingFeature,
+        gpflow.features.default_feature_conditional)
 
 class Classification(object):
     def __init__(self):
         self._load_data()
         self.num_inducing = 25
-        Z = self._compute_Z()
         window_size = 3
         patch_size = window_size**2
         kernel = ConvKernel(
@@ -66,36 +137,35 @@ class Classification(object):
                 window_size=window_size,
                 stride=1,
                 channels=1)
+        Z = kernel.init_inducing_patches(self.X_train, self.num_inducing)
+        inducing_features = PatchInducingFeature(Z)
+        print("z initialized")
         self.model = gpflow.models.SVGP(self.X_train, self.Y_train,
                 kern=kernel,
-                Z=Z,
+                feat=inducing_features,
                 num_latent=10,
                 likelihood=gpflow.likelihoods.MultiClass(10),
-                whiten=True)
+                whiten=True,
+                minibatch_size=32)
+        self.model.compile()
 
 
     def run(self):
-        optimizer = gpflow.train.GradientDescentOptimizer(learning_rate=0.01)
+        optimizer = gpflow.train.AdamOptimizer(learning_rate=0.01)
         optimizer.minimize(self.model)
-
-    def _compute_Z(self):
-        X = self.X_train.reshape(-1, 28**2)
-        k_means = cluster.KMeans(n_clusters=self.num_inducing,
-                init='random', n_jobs=-1)
-        k_means.fit(X)
-        print("z initialized")
-        return k_means.cluster_centers_.reshape(-1, 28, 28, 1)
+        print(self.model)
 
     def _load_data(self):
         (self.X_train, self.Y_train), (
                 self.X_test, self.Y_test) = observations.mnist('/tmp/mnist/')
         def reshape(X):
             return X.reshape(-1, 28, 28, 1)
-        self.X_train = reshape(self.X_train)[0:10000].astype(gpflow.settings.float_type)
-        self.X_test = reshape(self.X_test).astype(gpflow.settings.float_type)
+        self.X_train = reshape(self.X_train)[0:10000].astype(settings.float_type)
+        self.X_test = reshape(self.X_test).astype(settings.float_type)
 
 
 if __name__ == "__main__":
     experiment = Classification()
     experiment.run()
+
 
