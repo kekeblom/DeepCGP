@@ -46,12 +46,12 @@ class MNIST(object):
 
     def _setup_model(self):
         self.num_inducing = 750
-        window_size = 5
-        patch_size = window_size**2
+        filter_size = 5
+        patch_size = filter_size**2
         kernel = ConvKernel(
                 gpflow.kernels.RBF(input_dim=patch_size),
                 image_size=(28, 28),
-                window_size=window_size,
+                filter_size=filter_size,
                 stride=1,
                 channels=1)
         Z = kernel.init_inducing_patches(self.X_train, self.num_inducing)

@@ -12,15 +12,16 @@ def _sample(tensor, count):
 
 class ConvKernel(gpflow.kernels.Kernel):
     # Loosely based on https://github.com/markvdw/convgp/blob/master/convgp/convkernels.py
-    def __init__(self, base_kernel, image_size, window_size=3, stride=1, channels=1):
-        super().__init__(input_dim=window_size*window_size)
+    def __init__(self, base_kernel, image_size, filter_size=5, stride=1, channels=1):
+        super().__init__(input_dim=filter_size*filter_size)
         self.base_kernel = base_kernel
         self.image_size = image_size
-        self.window_size = window_size
+        self.filter_size = filter_size
         self.stride = stride
         self.dilation = 1
-        self.patch_size = (window_size, window_size)
+        self.patch_size = (filter_size, filter_size)
         self.color_channels = channels
+        self.patch_weights = gpflow.Param(np.ones(self._patch_count, dtype=settings.float_type))
 
     def _get_patches(self, X):
         """_get_patches
@@ -32,7 +33,7 @@ class ConvKernel(gpflow.kernels.Kernel):
         # returns: batch x height x width x channels * patches
         X = self._reshape_X(X)
         patches = tf.extract_image_patches(X,
-                [1, self.window_size, self.window_size, 1],
+                [1, self.filter_size, self.filter_size, 1],
                 [1, self.stride, self.stride, 1],
                 [1, self.dilation, self.dilation, 1],
                 "VALID")
@@ -49,7 +50,6 @@ class ConvKernel(gpflow.kernels.Kernel):
         X_shape = tf.shape(X)
         return tf.reshape(X, (X_shape[0], *self.image_size, self.color_channels))
 
-
     def K(self, X, X2=None):
         patch_length = self._patch_length
         patches = tf.reshape(self._get_patches(X), [-1, patch_length])
@@ -62,18 +62,24 @@ class ConvKernel(gpflow.kernels.Kernel):
         # K: batch * patches x batch * patches
         K = self.base_kernel.K(patches, patches2)
         X_shape = tf.shape(X)
-        reshaped_K  = tf.reshape(K, (X_shape[0], self._patch_count, -1, self._patch_count))
-        # Sum over the patches.
-        K = tf.reduce_sum(reshaped_K, [1, 3]) / (self._patch_count ** 2)
-        return K
+        # Reshape to batch x _patch_count x batch x _patch_count
+        K  = tf.reshape(K, (X_shape[0], self._patch_count, X_shape[0], self._patch_count))
+
+        w = self.patch_weights
+        W = w[None, :] * w[:, None] # P x P
+        W = W[None, :, None, :] # 1 x P x 1 x P
+        K = reshaped_K * W
+
+        # Sum over the patch dimensions.
+        return tf.reduce_sum(K, [1, 3]) / (self._patch_count ** 2)
 
     def Kdiag(self, X):
-        # patches: N x _patch_count x _patch_length
         # Compute auto correlation in the patch space.
+        # patches: N x _patch_count x _patch_length
         patches = self._get_patches(X)
-
+        W = self.patch_weights[None, :] * self.patch_weights[:, None]
         def sumK(p):
-            return tf.reduce_sum(self.base_kernel.K(p))
+            return tf.reduce_sum(self.base_kernel.K(p) * W)
         return tf.map_fn(sumK, patches) / (self._patch_count ** 2)
 
     def Kzx(self, Z, X):
@@ -86,6 +92,10 @@ class ConvKernel(gpflow.kernels.Kernel):
         N = tf.shape(X)[0]
         # Reshape to M x N x _patch_count then sum over patches.
         Kzx = tf.reshape(Kzx, (M, N, self._patch_count))
+
+        w = self.patch_weights
+        Kzx = Kzx * self.patch_weights
+
         Kzx = tf.reduce_sum(Kzx, [2])
         return Kzx / self._patch_count
 
@@ -95,7 +105,7 @@ class ConvKernel(gpflow.kernels.Kernel):
     def init_inducing_patches(self, X, M):
         # Randomly sample images and patches.
         patches = np.zeros((M, self._patch_length), dtype=settings.float_type)
-        patches_per_image = 5
+        patches_per_image = 1
         for i in range(M // patches_per_image):
             # Sample a random image, compute the patches and sample some random patches.
             image = _sample(X, 1)
