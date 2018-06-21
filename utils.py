@@ -57,7 +57,7 @@ class AccuracyLogger(Logger):
             X = self.X_test[the_slice]
             Y = self.Y_test[the_slice]
             probabilities, _ = model.predict_y(X)
-            predicted_class = probabilities.argmax(axis=1)
+            predicted_class = probabilities.argmax(axis=1)[:, None]
             correct += (predicted_class == Y).sum()
         return correct / self.Y_test.size
 
