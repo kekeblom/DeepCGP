@@ -1,0 +1,5 @@
+tensorflow-gpu>=1.8.0
+gpflow>=1.1.1
+Observations>=0.1.4
+toml>=0.9
+
