@@ -3,6 +3,7 @@ import math
 import os
 import gpflow
 import toml
+import numpy as np
 import tensorflow as tf
 
 def ensure_dir(path):
@@ -82,11 +83,25 @@ class LogLikelihoodLogger(Logger):
         return log_likelihood
 
 class InducingPointSaver(object):
-    def __init__(self, model):
+    def __init__(self, model, test_dir):
         self.model = model
+        self.test_dir = test_dir
 
-    def write(self):
-        import ipdb; ipdb.set_trace()
+    def save(self):
+        self._save_model()
+        self._save_inducing_points()
+
+    def _save_model(self):
+        saver = tf.train.Saver()
+
+        path = os.path.join(self.test_dir, "model.ckpt")
+        sess = self.model.enquire_session()
+        saver.save(sess, path)
+
+    def _save_inducing_points(self):
+        path = os.path.join(self.test_dir, "inducing_points.npy")
+        np.save(path, self.model.feature.Z._value)
+
 
 class Log(object):
     def __init__(self, log_dir, run_name, loggers):
@@ -106,9 +121,15 @@ class Log(object):
         self.csv_writer.writerow(self.headers)
 
     def _start_log_file(self, name):
-        file_path = os.path.join(self.result_dir, name + '.csv')
+        file_path = os.path.join(self.result_dir, 'log.csv')
         self.file = open(file_path, 'wt')
         self.csv_writer = csv.writer(self.file)
+
+    def _human_readable(self, entry):
+        abuffer = []
+        for key, value in zip(self.headers, entry):
+            abuffer.append("{key}: {value}".format(key=key, value=value))
+        return "; ".join(abuffer)
 
     def write_entry(self, model):
         entry = [self.entries] + [logger(model) for logger in self.loggers]
@@ -122,12 +143,9 @@ class Log(object):
         with open(arg_file, 'wt') as f:
             toml.dump(flags, f)
 
-    def _human_readable(self, entry):
-        abuffer = []
-        for key, value in zip(self.headers, entry):
-            abuffer.append("{key}: {value}".format(key=key, value=value))
-        return "; ".join(abuffer)
-
+    def write_model(self, model):
+        saver = InducingPointSaver(model, self.result_dir)
+        saver.save()
 
     def close(self):
         self.file.close()

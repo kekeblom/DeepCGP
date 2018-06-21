@@ -16,7 +16,8 @@ class MNIST(object):
         self._setup_optimizer()
         self._setup_logger()
 
-    def close(self):
+    def conclude(self):
+        self.log.write_model(self.model)
         self.log.close()
 
     def train_step(self):
@@ -48,6 +49,7 @@ class MNIST(object):
         self.model = gpflow.models.SVGP(self.X_train, self.Y_train,
                 kern=kernel,
                 feat=inducing_features,
+                num_latent=10,
                 likelihood=gpflow.likelihoods.MultiClass(10),
                 whiten=False,
                 minibatch_size=self.minibatch_size)
@@ -56,7 +58,7 @@ class MNIST(object):
     def _setup_optimizer(self):
         self.global_step = tf.train.get_or_create_global_step()
         self.model.enquire_session().run(self.global_step.initializer)
-        self.lr_schedule = tf.train.exponential_decay(1e-2, self.global_step,
+        self.lr_schedule = tf.train.exponential_decay(self.flags.lr, self.global_step,
                 decay_steps=self.flags.lr_decay_steps,
                 decay_rate=0.1)
         self.optimizer = gpflow.train.AdamOptimizer(learning_rate=self.lr_schedule)
@@ -111,6 +113,7 @@ def read_args():
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--log-dir', type=str, default='results',
             help='Directory to write the results to.')
+    parser.add_argument('--lr', type=float, default=0.01)
     return parser.parse_args()
 
 def train_steps(flags):
@@ -131,7 +134,7 @@ def main():
         for i in range(train_steps(flags)):
             experiment.train_step()
     finally:
-        experiment.close()
+        experiment.conclude()
 
 if __name__ == "__main__":
     main()
