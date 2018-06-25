@@ -113,6 +113,11 @@ class Log(object):
 
     def _result_dir(self, log_dir, run_name):
         path = os.path.join(log_dir, run_name)
+        # Log directory is created automatically.
+        # If an experiment has already been run with the same name, it's probably
+        # a mistake and we should blow up.
+        if os.path.exists(path):
+            raise OSError("Result directory already exists.")
         ensure_dir(path)
         return path
 
