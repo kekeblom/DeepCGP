@@ -1,0 +1,8 @@
+fashion = false
+N = 40000
+M = 100
+name = "N40000_M100"
+lr_decay_steps = 100000
+test_every = 25000
+log_dir = "results"
+lr = 0.01

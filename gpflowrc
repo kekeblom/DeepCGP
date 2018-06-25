@@ -1,0 +1,23 @@
+[verbosity]
+tf_compile_verb = False
+hmc_verb = True
+optimisation_verb = False
+
+[dtypes]
+float_type = float32
+int_type = int32
+
+[numerics]
+jitter_level = 1e-5
+
+[profiling]
+dump_timeline = False
+dump_tensorboard = False
+output_file_name = timeline
+output_directory = profile
+each_time = True
+
+[session]
+intra_op_parallelism_threads = 0
+inter_op_parallelism_threads = 0
+
