@@ -102,3 +102,11 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Specific for this project
+*.npy
+*.meta
+*.index
+checkpoint
+model.ckpt*
+
