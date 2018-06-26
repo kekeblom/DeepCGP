@@ -28,7 +28,7 @@ class ConvKernel(gpflow.kernels.Kernel):
         """_get_patches
 
         :param X: N x height x width x color_channels
-        :returns N x _patch_count x _patch_length
+        :returns N x _patch_count x patch_length
         """
         # X: batch x height * width * channels
         # returns: batch x height x width x channels * patches
@@ -39,7 +39,7 @@ class ConvKernel(gpflow.kernels.Kernel):
                 [1, self.dilation, self.dilation, 1],
                 "VALID")
         N = tf.shape(X)[0]
-        return tf.reshape(patches, (N, self._patch_count, self._patch_length))
+        return tf.reshape(patches, (N, self._patch_count, self.patch_length))
 
     def _reshape_X(self, X):
         """
@@ -52,7 +52,7 @@ class ConvKernel(gpflow.kernels.Kernel):
         return tf.reshape(X, (X_shape[0], *self.image_size, self.color_channels))
 
     def K(self, X, X2=None):
-        patch_length = self._patch_length
+        patch_length = self.patch_length
         patches = tf.reshape(self._get_patches(X), [-1, patch_length])
 
         if X2 is None:
@@ -76,7 +76,7 @@ class ConvKernel(gpflow.kernels.Kernel):
 
     def Kdiag(self, X):
         # Compute auto correlation in the patch space.
-        # patches: N x _patch_count x _patch_length
+        # patches: N x _patch_count x patch_length
         patches = self._get_patches(X)
         W = self.patch_weights[None, :] * self.patch_weights[:, None]
         def sumK(p):
@@ -84,9 +84,9 @@ class ConvKernel(gpflow.kernels.Kernel):
         return tf.map_fn(sumK, patches) / (self._patch_count ** 2)
 
     def Kzx(self, Z, X):
-        # Patches: N x _patch_count x _patch_length
+        # Patches: N x _patch_count x patch_length
         patches = self._get_patches(X)
-        patches = tf.reshape(patches, (-1, self._patch_length))
+        patches = tf.reshape(patches, (-1, self.patch_length))
         # Kzx shape: M x N * _patch_count
         Kzx = self.base_kernel.K(Z, patches)
         M = tf.shape(Z)[0]
@@ -103,25 +103,10 @@ class ConvKernel(gpflow.kernels.Kernel):
     def Kzz(self, Z):
         return self.base_kernel.K(Z)
 
-    def init_inducing_patches(self, X, M):
-        # Randomly sample images and patches.
-        patches = np.zeros((M, self._patch_length), dtype=settings.float_type)
-        patches_per_image = 1
-        samples_per_inducing_point = 100
-        for i in range(M * samples_per_inducing_point // patches_per_image):
-            # Sample a random image, compute the patches and sample some random patches.
-            image = _sample(X, 1)
-            image_patches = self.autoflow_patches(image).reshape(-1, self._patch_length)
-            patches[i*patches_per_image:(i+1)*patches_per_image] = _sample(image_patches, patches_per_image)
-
-        k_means = cluster.KMeans(n_clusters=M,
-                init='k-means++', n_jobs=-1)
-        k_means.fit(patches)
-        return k_means.cluster_centers_.reshape(M, self._patch_length)
 
     @property
-    def _patch_length(self):
-        """_patch_length: the number of elements in a patch."""
+    def patch_length(self):
+        """patch_length: the number of elements in a patch."""
         return self.color_channels * np.prod(self.patch_size)
 
     @property
@@ -136,9 +121,26 @@ class ConvKernel(gpflow.kernels.Kernel):
 
 
 class PatchInducingFeature(InducingFeature):
-    def __init__(self, Z):
+    def __init__(self, X, num_inducing, kern):
         super().__init__()
+        Z = self._compute_inducing_patches(X, num_inducing, kern)
         self.Z = Parameter(Z, dtype=settings.float_type)
+
+    def _compute_inducing_patches(self, X, M, kern):
+        # Randomly sample images and patches.
+        patches = np.zeros((M, kern.patch_length), dtype=settings.float_type)
+        patches_per_image = 1
+        samples_per_inducing_point = 100
+        for i in range(M * samples_per_inducing_point // patches_per_image):
+            # Sample a random image, compute the patches and sample some random patches.
+            image = _sample(X, 1)
+            image_patches = kern.autoflow_patches(image).reshape(-1, kern.patch_length)
+            patches[i*patches_per_image:(i+1)*patches_per_image] = _sample(image_patches, patches_per_image)
+
+        k_means = cluster.KMeans(n_clusters=M,
+                init='random', n_jobs=-1)
+        k_means.fit(patches)
+        return k_means.cluster_centers_.reshape(M, kern.patch_length)
 
     def __len__(self):
         return self.Z.shape[0]

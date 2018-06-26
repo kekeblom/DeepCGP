@@ -43,8 +43,7 @@ class MNIST(object):
                 filter_size=filter_size,
                 stride=1,
                 channels=1)
-        Z = kernel.init_inducing_patches(self.X_train, num_inducing)
-        inducing_features = PatchInducingFeature(Z)
+        inducing_features = PatchInducingFeature(self.X_train, num_inducing, kernel)
         print("z initialized")
         self.minibatch_size = self.flags.batch_size
         self.model = gpflow.models.SVGP(self.X_train, self.Y_train,
@@ -107,7 +106,7 @@ def read_args():
             help="Use fashion MNIST instead of regular MNIST.")
     parser.add_argument('-N', type=int,
             help="How many training examples to use.", default=60000)
-    parser.add_argument('-M', type=int,
+    parser.add_argument('-M', type=int, default=64,
             help="How many inducing points to use.")
     parser.add_argument('--name', type=str, required=True,
             help="What to call the experiment. Determines the directory where results are dumped.")
