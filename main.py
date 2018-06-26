@@ -15,6 +15,7 @@ class MNIST(object):
         self._setup_model()
         self._setup_optimizer()
         self._setup_logger()
+        self._write_initial_inducing_points()
 
     def conclude(self):
         self.log.write_model(self.model)
@@ -45,7 +46,7 @@ class MNIST(object):
         Z = kernel.init_inducing_patches(self.X_train, num_inducing)
         inducing_features = PatchInducingFeature(Z)
         print("z initialized")
-        self.minibatch_size = 128
+        self.minibatch_size = self.flags.batch_size
         self.model = gpflow.models.SVGP(self.X_train, self.Y_train,
                 kern=kernel,
                 feat=inducing_features,
@@ -95,6 +96,9 @@ class MNIST(object):
         self.log = utils.Log(self.flags.log_dir, self.flags.name, loggers)
         self.log.write_flags(self.flags)
 
+    def _write_initial_inducing_points(self):
+        self.log.write_inducing_points(self.model, "z_init.npy")
+
 
 def read_args():
     import argparse
@@ -112,16 +116,16 @@ def read_args():
     parser.add_argument('--test-every', type=int, default=10000,
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--log-dir', type=str, default='results',
-            help='Directory to write the results to.')
+            help="Directory to write the results to.")
     parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--batch-size', type=int, default=128,
+            help="Minibatch size to use in optimization.")
     return parser.parse_args()
 
 def train_steps(flags):
     # Roughly until the learning rate becomes 1e-5
-    minibatch_size = 128
-    steps_in_epoch = flags.N / minibatch_size
-
-    return math.ceil(flags.lr_decay_steps * 3 / flags.test_every)
+    decay_count = math.log(1e-5 / flags.lr, 0.1) # How many times decay has to be applied to read 1e-5.
+    return math.ceil(flags.lr_decay_steps * decay_count / flags.test_every)
 
 def main():
     np.random.seed(5033)

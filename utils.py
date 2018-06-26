@@ -82,14 +82,13 @@ class LogLikelihoodLogger(Logger):
             log_likelihood += batch_likelihood
         return log_likelihood
 
-class InducingPointSaver(object):
+class ModelSaver(object):
     def __init__(self, model, test_dir):
         self.model = model
         self.test_dir = test_dir
 
     def save(self):
         self._save_model()
-        self._save_inducing_points()
 
     def _save_model(self):
         saver = tf.train.Saver()
@@ -98,20 +97,15 @@ class InducingPointSaver(object):
         sess = self.model.enquire_session()
         saver.save(sess, path)
 
-    def _save_inducing_points(self):
-        path = os.path.join(self.test_dir, "inducing_points.npy")
-        np.save(path, self.model.feature.Z._value)
-
-
 class Log(object):
     def __init__(self, log_dir, run_name, loggers):
         self.loggers = loggers
-        self.result_dir = self._result_dir(log_dir, run_name)
+        self.log_dir = self._log_dir(log_dir, run_name)
         self._start_log_file(run_name)
         self._write_headers()
         self.entries = 0
 
-    def _result_dir(self, log_dir, run_name):
+    def _log_dir(self, log_dir, run_name):
         path = os.path.join(log_dir, run_name)
         # Log directory is created automatically.
         # If an experiment has already been run with the same name, it's probably
@@ -126,7 +120,7 @@ class Log(object):
         self.csv_writer.writerow(self.headers)
 
     def _start_log_file(self, name):
-        file_path = os.path.join(self.result_dir, 'log.csv')
+        file_path = os.path.join(self.log_dir, 'log.csv')
         self.file = open(file_path, 'wt')
         self.csv_writer = csv.writer(self.file)
 
@@ -144,13 +138,18 @@ class Log(object):
 
     def write_flags(self, flags):
         flags = vars(flags) # As dictionary.
-        arg_file = os.path.join(self.result_dir, 'options.toml')
+        arg_file = os.path.join(self.log_dir, 'options.toml')
         with open(arg_file, 'wt') as f:
             toml.dump(flags, f)
 
     def write_model(self, model):
-        saver = InducingPointSaver(model, self.result_dir)
+        saver = ModelSaver(model, self.log_dir)
         saver.save()
+        self.write_inducing_points(model, "inducing_points.npy")
+
+    def write_inducing_points(self, model, filename):
+        path = os.path.join(self.log_dir, filename)
+        np.save(path, model.feature.Z._value)
 
     def close(self):
         self.file.close()
