@@ -124,7 +124,7 @@ def read_args():
 
 def train_steps(flags):
     # Roughly until the learning rate becomes 1e-5
-    decay_count = math.log(1e-5 / flags.lr, 0.1) # How many times decay has to be applied to read 1e-5.
+    decay_count = math.log(1e-5 / flags.lr, 0.1) # How many times decay has to be applied to reach 1e-5.
     return math.ceil(flags.lr_decay_steps * decay_count / flags.test_every)
 
 def main():
