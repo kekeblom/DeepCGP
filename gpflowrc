@@ -17,6 +17,9 @@ output_file_name = timeline
 output_directory = profile
 each_time = True
 
+[logging]
+level = WARNING
+
 [session]
 intra_op_parallelism_threads = 0
 inter_op_parallelism_threads = 0

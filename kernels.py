@@ -4,6 +4,7 @@ import gpflow
 from gpflow import settings
 from gpflow.features import InducingFeature
 from gpflow.params import Parameter
+from gpflow.dispatch import dispatch
 from sklearn import cluster
 
 def _sample(tensor, count):
@@ -142,12 +143,15 @@ class PatchInducingFeature(InducingFeature):
     def __len__(self):
         return self.Z.shape[0]
 
-    def Kuu(self, kern, jitter=0.0):
-        return kern.Kzz(self.Z) + tf.eye(len(self), dtype=settings.dtypes.float_type) * jitter
+@dispatch(PatchInducingFeature, ConvKernel)
+def Kuu(feature, kern, jitter=0.0):
+    return kern.Kzz(feature.Z) + tf.eye(len(feature), dtype=settings.dtypes.float_type) * jitter
 
-    def Kuf(self, kern, Xnew):
-        return kern.Kzx(self.Z, Xnew)
+@dispatch(PatchInducingFeature, ConvKernel, object)
+def Kuf(feature, kern, Xnew):
+    return kern.Kzx(feature.Z, Xnew)
 
-gpflow.features.conditional.register(PatchInducingFeature,
-        gpflow.features.default_feature_conditional)
+
+# gpflow.features.conditional.register(PatchInducingFeature,
+#         gpflow.features.default_feature_conditional)
 

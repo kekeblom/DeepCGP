@@ -1,0 +1,3 @@
+[submodule "submodules/GPflow"]
+	path = submodules/GPflow
+	url = https://github.com/GPflow/GPflow
