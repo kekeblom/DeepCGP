@@ -51,12 +51,15 @@ class AccuracyLogger(Logger):
 
     def __call__(self, model):
         correct = 0
-        batch_size = 512
+        batch_size = 64
         for i in range(len(self.Y_test) // batch_size + 1):
             the_slice = slice(i * batch_size, (i+1) * batch_size)
             X = self.X_test[the_slice]
             Y = self.Y_test[the_slice]
-            probabilities, _ = model.predict_y(X)
+            mean_samples, _ = model.predict_y(X, 100) # 100 samples.
+            # Grab the mean probability over all samples.
+            # Then argmax to get the final prediction.
+            probabilities = mean_samples.mean(axis=0)
             predicted_class = probabilities.argmax(axis=1)[:, None]
             correct += (predicted_class == Y).sum()
         return correct / self.Y_test.size
