@@ -7,7 +7,7 @@ import utils
 from sklearn import preprocessing, decomposition, cluster
 from gpflow import settings, features, kernels
 from doubly_stochastic_dgp.dgp import DGP_Base
-from doubly_stochastic_dgp.layers import Layer
+from doubly_stochastic_dgp.layers import SVGP_Layer
 from kernels import ConvKernel, PatchInducingFeature
 from layers import ConvLayer
 
@@ -58,8 +58,8 @@ class MNIST(object):
         patch_length = filter_size**2
         conv_features = PatchInducingFeature(self.X_train.reshape(-1, 28, 28), self.flags.M,
                 filter_size)
-        h1_dim = 32
-        conv_pca = pca(self.X_train, h1_dim)
+        h1_out = 576
+        conv_pca = pca(self.X_train, h1_out)
         conv_mean = gpflow.mean_functions.Linear(conv_pca)
         conv_mean.set_trainable(False)
 
@@ -69,16 +69,15 @@ class MNIST(object):
         layers = [
                 ConvLayer(
                     base_kernel=kernels.RBF(patch_length),
-                    num_outputs=h1_dim,
                     mean_function=conv_mean,
                     feature=conv_features,
                     input_size=(28, 28),
                     feature_maps=1,
                     filter_size=filter_size,
                     white=False),
-                SVGP_Layer(gpflow.kernels.RBF(h1_dim, lengthscales=2, variance=2), num_outputs=10,
+                SVGP_Layer(gpflow.kernels.RBF(h1_out, lengthscales=2, variance=2), num_outputs=10,
                     feature=rbf_features,
-                    mean_function=gpflow.mean_functions.Zero(),
+                    mean_function=gpflow.mean_functions.Zero(output_dim=10),
                     white=False)
         ]
 
