@@ -16,17 +16,18 @@ class PatchMixin(object):
         """extract_patches
 
         :param X: N x height x width x feature_maps
-        :returns N x patch_count x patch_length
+        :returns N x patch_count * feature_maps x patch_length
         """
         # X: batch x height * width * feature_maps
         # returns: batch x height x width x feature_maps * patches
-        patches = tf.extract_image_patches(NHWC_X,
+        NHWK_patches = tf.extract_image_patches(NHWC_X,
                 [1, self.filter_size, self.filter_size, 1],
                 [1, self.stride, self.stride, 1],
                 [1, self.dilation, self.dilation, 1],
                 "VALID")
         N = tf.shape(NHWC_X)[0]
-        return tf.reshape(patches, (N, self.patch_count, self.patch_length * self.feature_maps))
+        NKHW_patches = tf.transpose(NHWK_patches, [0, 3, 1, 2])
+        return tf.reshape(NKHW_patches, [N, self.patch_count * self.feature_maps, self.patch_length])
 
 
 class ConvKernel(gpflow.kernels.Kernel, PatchMixin):

@@ -3,9 +3,9 @@ import tensorflow as tf
 import gpflow
 from gpflow import settings, features, conditionals, transforms
 from gpflow.dispatch import dispatch
+from gpflow.kullback_leiblers import gauss_kl
 from doubly_stochastic_dgp.layers import Layer
-from kernels import PatchMixin, ConvKernel, PatchInducingFeature
-
+from kernels import PatchMixin, PatchInducingFeature
 
 class ConvLayer(Layer, PatchMixin):
     def __init__(self, base_kernel, mean_function, feature=None,
@@ -28,27 +28,29 @@ class ConvLayer(Layer, PatchMixin):
 
         self.white = white
 
-        self.conv_kernel = ConvKernel(base_kernel, input_size, filter_size, feature_maps=feature_maps)
         self.feature = feature
 
-        self.num_outputs = self.patch_count
         self.num_inducing = len(feature)
+        self.num_outputs = self.patch_count
 
         M1_q_mu = np.zeros((self.num_inducing, 1), dtype=settings.float_type)
         self.M1_q_mu = gpflow.Param(M1_q_mu)
 
         #TODO figure out if we need whitened vs non-whitened GP.
         if not self.white:
-            #TODO this should be size MM and not individually learned for each output.
-            self.OMM_q_s = self._init_q_s_from_Z()
+            MM_q_sqrt = self._init_q_S()
         else:
-            self.OMM_q_s = gpflow.Param(np.tile(
-                    np.eye(self.num_inducing, dtype=settings.float_type),
-                    [self.num_outputs, 1, 1]))
+            MM_q_sqrt = np.eye(self.num_inducing, dtype=settings.float_type)
+        q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing)
+        self.IMM_q_sqrt = gpflow.Param(MM_q_sqrt[None, :, :], transform=q_sqrt_transform)
 
         self.mean_function = mean_function
 
         self._build_cholesky()
+
+    def Kuu(self):
+        return self.base_kernel.K(self.feature.Z) + tf.eye(self.num_inducing,
+                dtype=settings.float_type) * settings.jitter
 
     def Kuf(self, ML_Z, NHWC_X):
         """ Returns covariance between inducing points and input.
@@ -60,12 +62,16 @@ class ConvLayer(Layer, PatchMixin):
         N = tf.shape(NHWC_X)[0]
         JL_patches = tf.reshape(NPL_patches, [N * self.patch_count, self.patch_length])
         MJ_Kzx = self.base_kernel.K(ML_Z, JL_patches)
-        check_rank = tf.assert_rank(MJ_Kzx, 2)
-        with tf.control_dependencies([check_rank]):
-            MNP_Kzx = tf.reshape(MJ_Kzx, [self.num_inducing, N, self.patch_count])
-            OMN_Kzx = tf.transpose(MNP_Kzx, [2, 0, 1])
 
-        return OMN_Kzx
+        check_shape = tf.assert_equal(tf.shape(MJ_Kzx)[0], self.num_inducing)
+        check_shape2 = tf.assert_equal(tf.shape(MJ_Kzx)[1], self.patch_count * N)
+        check_rank = tf.assert_rank(MJ_Kzx, 2)
+
+        with tf.control_dependencies([check_rank, check_shape, check_shape2]):
+            MNP_Kzx = tf.reshape(MJ_Kzx, [self.num_inducing, N, self.patch_count])
+            PMN_Kzx = tf.transpose(MNP_Kzx, [2, 0, 1])
+
+            return PMN_Kzx
 
     def Kff(self, NHWC_X):
         """Kff returns auto covariance of the input.
@@ -90,55 +96,47 @@ class ConvLayer(Layer, PatchMixin):
         return tf.map_fn(Kdiag, PNL_patches)
 
     def conditional_ND(self, ND_X, full_cov=False):
-        """conditional_ND Returns the mean and variance of the normal distribution
-        corresponding to q(f) ~ N(Am, Knm + A(S - Kmm)A^T) where A = Knm Kmm^{-1}
+        """
+        Returns the mean and the variance of q(f|m, S) = N(f| Am, K_nn + A(S - K_mn)A^T)
+        where A = K_nm @ K_mm^{-1}
 
-        dimensions O: num_outputs
+        dimension O: num_outputs (== patch_count)
 
         :param ON_X: The input X of shape O x N
         :param full_cov: if true, var is in (N, N, D_out) instead of (N, D_out) i.e. we
         also compute entries outside the diagonal.
         """
+
         N = tf.shape(ND_X)[0]
         NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
         OMN_Kuf = self.Kuf(self.feature.Z, NHWC_X)
-        # NM_Knm = conditionals.Kuf(self.feature, self.conv_kernel, NHWC_X)
 
-        # A = NM_Knm @ MM_Kmm_inv
         OMN_A = tf.matrix_triangular_solve(self.OMM_Lu, OMN_Kuf, lower=True)
         if not self.white:
-            # A = A @ Lu^-T
             OMM_Lu = tf.transpose(self.OMM_Lu, [0, 2, 1])
             OMN_A = tf.matrix_triangular_solve(OMM_Lu, OMN_A, lower=False)
 
-        NOM_A = tf.transpose(OMN_A, [2, 0, 1])
-        NM1_q_mu = tf.tile(self.M1_q_mu[None, :, :], [N, 1, 1])
-        NO1_mean = tf.matmul(NOM_A, NM1_q_mu) # NOM @ NM1 => N x O
-        NO_mean = tf.reshape(NO1_mean, [N, self.patch_count])
-        # NO_mean = tf.matmul(MN_A, self.MO_q_mu, transpose_a=True) # NM @ MO => NO
+        ONM_A = tf.transpose(OMN_A, [0, 2, 1])
 
-        if self.white:
-            OMM_SK = -tf.eye(self.num_inducing, dtype=settings.float_type)[None, :, :]
-        else:
-            OMM_SK = -self.OMM_Ku
+        OM1_q_mu = tf.tile(self.M1_q_mu[None, :, :], [self.patch_count, 1, 1])
+        ON_mean = tf.matmul(ONM_A, OM1_q_mu)[:, :, 0]
+        NO_mean = tf.transpose(ON_mean, [1, 0])
 
-        OMM_SK = OMM_SK + tf.matmul(self.OMM_q_s, self.OMM_q_s, transpose_b=True)
+        IMM_q_S = tf.matmul(self.IMM_q_sqrt, self.IMM_q_sqrt, transpose_b=True)
 
-        # OMN_A = tf.tile(MN_A[None, :, :], [self.num_outputs, 1, 1])
-        OMN_B = OMM_SK @ OMN_A
+        OMM_SK = tf.tile(IMM_q_S - self.MM_Ku, [self.patch_count, 1, 1])
+
+        ONN_additive = ONM_A @ OMM_SK @ OMN_A
 
         if full_cov:
             ONN_Knn = self.Kff(NHWC_X)
-            # NN_Knn = self.conv_kernel.K(NHWC_X)
-            ONN_var = ONN_Knn + tf.matmul(OMN_A, OMN_B, transpose_a=True)
+            ONN_var = ONN_Knn + ONN_additive
             var = tf.transpose(ONN_var, [1, 2, 0])
         else:
             ON_Kdiag = self.Kdiag(NHWC_X)
-            # ON_Kdiag = self.conv_kernel.Kdiag(NHWC_X)
-            OMN_delta_cov = OMN_A * OMN_B
-            ON_delta_cov = tf.reduce_sum(OMN_delta_cov, 1)
-            ON_var = ON_Kdiag + ON_delta_cov
+            ON_diag = tf.matrix_diag_part(ONN_additive)
 
+            ON_var = ON_Kdiag + ON_diag
             var = tf.transpose(ON_var, [1, 0])
 
         return NO_mean + self.mean_function(ND_X), var
@@ -163,19 +161,19 @@ class ConvLayer(Layer, PatchMixin):
 
         return KL
 
-    def _init_q_s_from_Z(self):
+    def _init_q_S(self):
         with gpflow.params_as_tensors_for(self.feature):
-            MM_Ku = conditionals.Kuu(self.feature, self.conv_kernel, jitter=settings.jitter)
+            MM_Ku = self.Kuu()
             MM_Lu = tf.linalg.cholesky(MM_Ku)
             MM_Lu = self.enquire_session().run(MM_Lu)
-            return gpflow.Param(MM_Lu)
+            return MM_Lu
 
     def _build_cholesky(self):
         with gpflow.params_as_tensors_for(self.feature):
-            self.MM_Ku = conditionals.Kuu(self.feature, self.conv_kernel, jitter=settings.jitter)
+            self.MM_Ku = self.Kuu()
             self.MM_Lu = tf.linalg.cholesky(self.MM_Ku)
-            self.OMM_Lu = tf.tile(self.MM_Lu[None, :, :], [self.num_outputs, 1, 1])
-            self.OMM_Ku = tf.tile(self.MM_Ku[None, :, :], [self.num_outputs, 1, 1])
+            self.OMM_Lu = tf.tile(self.MM_Lu[None, :, :], [self.patch_count, 1, 1])
+            self.OMM_Ku = tf.tile(self.MM_Ku[None, :, :], [self.patch_count, 1, 1])
 
     def _patch_length(self):
         """The number of elements in a patch."""

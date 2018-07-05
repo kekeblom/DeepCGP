@@ -148,7 +148,7 @@ def read_args():
             help="How many inducing points to use.")
     parser.add_argument('--name', type=str, required=True,
             help="What to call the experiment. Determines the directory where results are dumped.")
-    parser.add_argument('--lr-decay-steps', type=int, default=25000,
+    parser.add_argument('--lr-decay-steps', type=int, default=50000,
             help="The program uses exponential learning rate decay with 0.1 decay every lr-decay-steps.")
     parser.add_argument('--test-every', type=int, default=5000,
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
