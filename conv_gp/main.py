@@ -56,7 +56,7 @@ class MNIST(object):
     def _setup_model(self):
         filter_size = 5
         patch_length = filter_size**2
-        conv_features = PatchInducingFeature(self.X_train.reshape(-1, 28, 28), self.flags.M,
+        conv_features = PatchInducingFeature.from_images(self.X_train.reshape(-1, 28, 28), self.flags.M,
                 filter_size)
         h1_out = 576
         conv_pca = pca(self.X_train, h1_out)

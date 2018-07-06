@@ -2,13 +2,13 @@ import numpy as np
 import tensorflow as tf
 import gpflow
 from gpflow import settings, features, conditionals, transforms
-from gpflow.dispatch import dispatch
 from gpflow.kullback_leiblers import gauss_kl
 from doubly_stochastic_dgp.layers import Layer
 from kernels import PatchMixin, PatchInducingFeature
 
-class MultiOutputConvKernel(PatchMixin):
-    def __init__(self, base_kernel, feature, input_size, filter_size, feature_maps):
+class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
+    def __init__(self, base_kernel, input_size, filter_size, feature_maps):
+        super().__init__(input_dim=np.prod(input_size))
         self.base_kernel = base_kernel
         self.input_size = input_size
         self.filter_size = filter_size
@@ -18,11 +18,10 @@ class MultiOutputConvKernel(PatchMixin):
         self.patch_shape = (filter_size, filter_size)
         self.patch_count = self._patch_count()
         self.patch_length = self._patch_length()
-        self.num_inducing = len(feature)
-        self.feature = feature
 
-    def Kuu(self):
-        return self.base_kernel.K(self.feature.Z) + tf.eye(self.num_inducing,
+    def Kuu(self, ML_Z):
+        M = tf.shape(ML_Z)[0]
+        return self.base_kernel.K(ML_Z) + tf.eye(M,
                 dtype=settings.float_type) * settings.jitter
 
     def Kuf(self, ML_Z, PNL_patches):
@@ -66,7 +65,7 @@ class ConvLayer(Layer):
         self.input_size = input_size
         self.feature_maps = feature_maps
 
-        self.conv_kernel = MultiOutputConvKernel(base_kernel, feature, input_size, filter_size, feature_maps)
+        self.conv_kernel = MultiOutputConvKernel(base_kernel, input_size, filter_size, feature_maps)
 
         self.patch_count = self.conv_kernel._patch_count()
         self.patch_length = self.conv_kernel._patch_length()
@@ -90,8 +89,7 @@ class ConvLayer(Layer):
         self.IMM_q_sqrt = gpflow.Param(MM_q_sqrt[None, :, :], transform=q_sqrt_transform)
 
         self.mean_function = mean_function
-
-        self._build_cholesky()
+        self._build_prior_cholesky()
 
     def conditional_ND(self, ND_X, full_cov=False):
         """
@@ -108,9 +106,13 @@ class ConvLayer(Layer):
         N = tf.shape(ND_X)[0]
         NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
         PNL_patches = self.conv_kernel.extract_patches_PNL(NHWC_X)
+
         PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
 
-        PMM_Lu = tf.tile(self.MM_Lu[None, :, :], [self.patch_count, 1, 1])
+        MM_Kuu = self.conv_kernel.Kuu(self.feature.Z)
+        MM_Lu = tf.linalg.cholesky(MM_Kuu)
+        PMM_Lu = tf.tile(MM_Lu[None, :, :], [self.patch_count, 1, 1])
+
         PMN_A = tf.matrix_triangular_solve(PMM_Lu, PMN_Kuf, lower=True)
         if not self.white:
             PMM_Lu_t = tf.transpose(PMM_Lu, [0, 2, 1])
@@ -124,7 +126,7 @@ class ConvLayer(Layer):
 
         IMM_q_S = tf.matmul(self.IMM_q_sqrt, self.IMM_q_sqrt, transpose_b=True)
 
-        PMM_SK = tf.tile(IMM_q_S - self.MM_Ku, [self.patch_count, 1, 1])
+        PMM_SK = tf.tile(IMM_q_S - MM_Kuu, [self.patch_count, 1, 1])
 
         PNN_additive = PNM_A @ PMM_SK @ PMN_A
 
@@ -168,25 +170,23 @@ class ConvLayer(Layer):
             # MM_trace_inner = tf.cholesky_solve(self.MM_Lu, MM_q_S)
             # KL += tf.trace(MM_trace_inner)
             # # q_mu^T @ Kuu @ q_mu
-            # KL += tf.reduce_sum(tf.matmul(self.M1_q_mu, self.MM_Ku, transpose_a=True) @ self.M1_q_mu, [0, 1])
+            # KL += tf.reduce_sum(tf.matmul(self.M1_q_mu, self.MM_Ku_prior, transpose_a=True) @ self.M1_q_mu, [0, 1])
             # # log determinant term
             # KL += 2 * tf.reduce_sum(tf.log(tf.diag_part(self.MM_Lu)))
             # KL -= 2 * tf.reduce_sum(tf.log(tf.diag_part(MM_q_sqrt)))
 
             # return 0.5 * KL * self.patch_count
-            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, self.MM_Ku) * self.patch_count
+            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, self.MM_Ku_prior) * self.patch_count
 
+    def _build_prior_cholesky(self):
+        self.MM_Ku_prior = self.conv_kernel.Kuu(self.feature.Z.parameter_tensor)
+        MM_Lu_prior = tf.linalg.cholesky(self.MM_Ku_prior)
+        self.MM_Lu_prior = self.enquire_session().run(MM_Lu_prior)
 
     def _init_q_S(self):
-        with gpflow.params_as_tensors_for(self.feature):
-            MM_Ku = self.conv_kernel.Kuu()
-            MM_Lu = tf.linalg.cholesky(MM_Ku)
-            MM_Lu = self.enquire_session().run(MM_Lu)
-            return MM_Lu
-
-    def _build_cholesky(self):
-        with gpflow.params_as_tensors_for(self.feature):
-            self.MM_Ku = self.conv_kernel.Kuu()
-            self.MM_Lu = tf.linalg.cholesky(self.MM_Ku)
+        MM_Ku = self.conv_kernel.Kuu(self.feature.Z.parameter_tensor)
+        MM_Lu = tf.linalg.cholesky(MM_Ku)
+        MM_Lu = self.enquire_session().run(MM_Lu)
+        return MM_Lu
 
 

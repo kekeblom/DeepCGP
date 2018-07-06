@@ -128,13 +128,17 @@ class ConvKernel(gpflow.kernels.Kernel, PatchMixin):
     def Kzz(self, Z):
         return self.base_kernel.K(Z)
 
+def _sample_patches(HW_image, N, patch_size, patch_length):
+    out = np.zeros((N, patch_length))
+    for i in range(N):
+        patch_y = np.random.randint(0, HW_image.shape[0] - patch_size)
+        patch_x = np.random.randint(0, HW_image.shape[1] - patch_size)
+        out[i] = HW_image[patch_y:patch_y+patch_size, patch_x:patch_x+patch_size].reshape(patch_length)
+    return out
 
 class PatchInducingFeature(InducingPointsBase):
-    def __init__(self, NHW_X, num_inducing, patch_size):
-        Z = self._compute_inducing_patches(NHW_X, num_inducing, patch_size)
-        super().__init__(Z)
-
-    def _compute_inducing_patches(self, X, M, patch_size):
+    @classmethod
+    def from_images(cls, X, M, patch_size):
         patch_length = patch_size ** 2
         # Randomly sample images and patches.
         patches = np.zeros((M, patch_length), dtype=settings.float_type)
@@ -143,22 +147,15 @@ class PatchInducingFeature(InducingPointsBase):
         for i in range(M * samples_per_inducing_point // patches_per_image):
             # Sample a random image, compute the patches and sample some random patches.
             image = _sample(X, 1)[0]
-            sampled_patches = self._sample_patches(image, patches_per_image,
+            sampled_patches = _sample_patches(image, patches_per_image,
                     patch_size, patch_length)
             patches[i*patches_per_image:(i+1)*patches_per_image] = sampled_patches
 
         k_means = cluster.KMeans(n_clusters=M,
                 init='random', n_jobs=-1)
         k_means.fit(patches)
-        return k_means.cluster_centers_.reshape(M, patch_length)
-
-    def _sample_patches(self, HW_image, N, patch_size, patch_length):
-        out = np.zeros((N, patch_length))
-        for i in range(N):
-            patch_y = np.random.randint(0, HW_image.shape[0] - patch_size)
-            patch_x = np.random.randint(0, HW_image.shape[1] - patch_size)
-            out[i] = HW_image[patch_y:patch_y+patch_size, patch_x:patch_x+patch_size].reshape(patch_length)
-        return out
+        points = k_means.cluster_centers_.reshape(M, patch_length)
+        return PatchInducingFeature(points)
 
 
 @dispatch(PatchInducingFeature, ConvKernel)
