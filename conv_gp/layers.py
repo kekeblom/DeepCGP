@@ -9,13 +9,15 @@ from kernels import PatchMixin, PatchInducingFeature
 
 class MultiOutputConvKernel(PatchMixin):
     def __init__(self, base_kernel, feature, input_size, filter_size, feature_maps):
+        self.base_kernel = base_kernel
         self.input_size = input_size
+        self.filter_size = filter_size
         self.stride = 1
         self.dilation = 1
-        self.patch_count = self._patch_count()
-        self.base_kernel = base_kernel
         self.feature_maps = feature_maps
         self.patch_shape = (filter_size, filter_size)
+        self.patch_count = self._patch_count()
+        self.patch_length = self._patch_length()
         self.num_inducing = len(feature)
         self.feature = feature
 
@@ -23,16 +25,10 @@ class MultiOutputConvKernel(PatchMixin):
         return self.base_kernel.K(self.feature.Z) + tf.eye(self.num_inducing,
                 dtype=settings.float_type) * settings.jitter
 
-    def Kuf(self, ML_Z, NHWC_X):
+    def Kuf(self, ML_Z, PNL_patches):
         """ Returns covariance between inducing points and input.
         Output shape: patch_count x M x N
         """
-        # L: patch_length * feature_maps
-        NPL_patches = self.extract_patches(NHWC_X)
-
-        N = tf.shape(NHWC_X)[0]
-        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
-
         def patch_covariance(NL_patches):
             # Returns covariance matrix of size M x N.
             return self.base_kernel.K(ML_Z, NL_patches)
@@ -40,38 +36,25 @@ class MultiOutputConvKernel(PatchMixin):
         PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches)
         return PMN_Kzx
 
-    def Kff(self, NHWC_X):
+    def Kff(self, PNL_patches):
         """Kff returns auto covariance of the input.
         :return: O (== P) x N x N covariance matrices.
         """
-        NPL_patches = self.extract_patches(NHWC_X)
-        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
         def patch_auto_covariance(NL_patches):
             # Returns covariance matrix of size N x N.
             return self.base_kernel.K(NL_patches)
         return tf.map_fn(patch_auto_covariance, PNL_patches)
 
-    def Kdiag(self, NHWC_X):
+    def Kdiag(self, PNL_patches):
         """
         :return: O X N diagonals of the covariance matrices.
         """
-        NPL_patches = self.extract_patches(NHWC_X)
-        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
         def Kdiag(NL_patch):
             ":return: N diagonal of covariance matrix."
             return self.base_kernel.Kdiag(NL_patch)
         return tf.map_fn(Kdiag, PNL_patches)
 
-    def _patch_length(self):
-        """The number of elements in a patch."""
-        return self.feature_maps * np.prod(self.patch_shape)
-
-    def _patch_count(self):
-        """The amount of patches in one image."""
-        return (self.input_size[0] - self.patch_shape[0] + 1) * (
-                self.input_size[1] - self.patch_shape[1] + 1) * self.feature_maps
-
-class ConvLayer(Layer, PatchMixin):
+class ConvLayer(Layer):
     def __init__(self, base_kernel, mean_function, feature=None,
             input_size=None,
             feature_maps=None,
@@ -124,38 +107,39 @@ class ConvLayer(Layer, PatchMixin):
 
         N = tf.shape(ND_X)[0]
         NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
-        OMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, NHWC_X)
+        PNL_patches = self.conv_kernel.extract_patches_PNL(NHWC_X)
+        PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
 
-        OMM_Lu = tf.tile(self.MM_Lu[None, :, :], [self.patch_count, 1, 1])
-        OMN_A = tf.matrix_triangular_solve(OMM_Lu, OMN_Kuf, lower=True)
+        PMM_Lu = tf.tile(self.MM_Lu[None, :, :], [self.patch_count, 1, 1])
+        PMN_A = tf.matrix_triangular_solve(PMM_Lu, PMN_Kuf, lower=True)
         if not self.white:
-            OMM_Lu_t = tf.transpose(self.OMM_Lu, [0, 2, 1])
-            OMN_A = tf.matrix_triangular_solve(OMM_Lu_t, OMN_A, lower=False)
+            PMM_Lu_t = tf.transpose(PMM_Lu, [0, 2, 1])
+            PMN_A = tf.matrix_triangular_solve(PMM_Lu_t, PMN_A, lower=False)
 
-        ONM_A = tf.transpose(OMN_A, [0, 2, 1])
+        PNM_A = tf.transpose(PMN_A, [0, 2, 1])
 
-        OM1_q_mu = tf.tile(self.M1_q_mu[None, :, :], [self.patch_count, 1, 1])
-        ON_mean = tf.matmul(ONM_A, OM1_q_mu)[:, :, 0]
-        NO_mean = tf.transpose(ON_mean, [1, 0])
+        PM1_q_mu = tf.tile(self.M1_q_mu[None, :, :], [self.patch_count, 1, 1])
+        PN_mean = tf.matmul(PNM_A, PM1_q_mu)[:, :, 0]
+        NP_mean = tf.transpose(PN_mean, [1, 0])
 
         IMM_q_S = tf.matmul(self.IMM_q_sqrt, self.IMM_q_sqrt, transpose_b=True)
 
-        OMM_SK = tf.tile(IMM_q_S - self.MM_Ku, [self.patch_count, 1, 1])
+        PMM_SK = tf.tile(IMM_q_S - self.MM_Ku, [self.patch_count, 1, 1])
 
-        ONN_additive = ONM_A @ OMM_SK @ OMN_A
+        PNN_additive = PNM_A @ PMM_SK @ PMN_A
 
         if full_cov:
-            ONN_Knn = self.conv_kernel.Kff(NHWC_X)
-            ONN_var = ONN_Knn + ONN_additive
-            var = tf.transpose(ONN_var, [1, 2, 0])
+            PNN_Knn = self.conv_kernel.Kff(PNL_patches)
+            PNN_var = PNN_Knn + PNN_additive
+            var = tf.transpose(PNN_var, [1, 2, 0])
         else:
-            ON_Kdiag = self.conv_kernel.Kdiag(NHWC_X)
-            ON_diag = tf.matrix_diag_part(ONN_additive)
+            PN_Kdiag = self.conv_kernel.Kdiag(PNL_patches)
+            PN_diag = tf.matrix_diag_part(PNN_additive)
 
-            ON_var = ON_Kdiag + ON_diag
-            var = tf.transpose(ON_var, [1, 0])
+            PN_var = PN_Kdiag + PN_diag
+            var = tf.transpose(PN_var, [1, 0])
 
-        return NO_mean + self.mean_function(ND_X), var
+        return NP_mean + self.mean_function(ND_X), var
 
     def KL(self):
         """
