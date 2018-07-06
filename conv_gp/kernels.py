@@ -128,7 +128,7 @@ class PatchInducingFeature(InducingPointsBase):
         # Randomly sample images and patches.
         patches = np.zeros((M, patch_length), dtype=settings.float_type)
         patches_per_image = 1
-        samples_per_inducing_point = 100
+        samples_per_inducing_point = 1
         for i in range(M * samples_per_inducing_point // patches_per_image):
             # Sample a random image, compute the patches and sample some random patches.
             image = _sample(X, 1)[0]

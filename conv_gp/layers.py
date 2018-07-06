@@ -7,70 +7,6 @@ from gpflow.kullback_leiblers import gauss_kl
 from doubly_stochastic_dgp.layers import Layer
 from kernels import PatchMixin, PatchInducingFeature
 
-class MultiOutputConvKernel(PatchMixin):
-    def __init__(self, base_kernel, feature, input_size, filter_size, feature_maps):
-        self.input_size = input_size
-        self.stride = 1
-        self.dilation = 1
-        self.patch_count =
-        self.base_kernel = base_kernel
-        self.feature_maps = feature_maps
-        self.patch_shape = (filter_size, filter_size)
-        self.num_inducing = len(feature)
-        self.feature = feature
-
-    def Kuu(self):
-        return self.base_kernel.K(self.feature.Z) + tf.eye(self.num_inducing,
-                dtype=settings.float_type) * settings.jitter
-
-    def Kuf(self, ML_Z, NHWC_X):
-        """ Returns covariance between inducing points and input.
-        Output shape: patch_count x M x N
-        """
-        # L: patch_length * feature_maps
-        NPL_patches = self.extract_patches(NHWC_X)
-
-        N = tf.shape(NHWC_X)[0]
-        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
-
-        def patch_covariance(NL_patches):
-            # Returns covariance matrix of size M x N.
-            return self.base_kernel.K(ML_Z, NL_patches)
-
-        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches)
-        return PMN_Kzx
-
-    def Kff(self, NHWC_X):
-        """Kff returns auto covariance of the input.
-        :return: O (== P) x N x N covariance matrices.
-        """
-        NPL_patches = self.extract_patches(NHWC_X)
-        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
-        def patch_auto_covariance(NL_patches):
-            # Returns covariance matrix of size N x N.
-            return self.base_kernel.K(NL_patches)
-        return tf.map_fn(patch_auto_covariance, PNL_patches)
-
-    def Kdiag(self, NHWC_X):
-        """
-        :return: O X N diagonals of the covariance matrices.
-        """
-        NPL_patches = self.extract_patches(NHWC_X)
-        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
-        def Kdiag(NL_patch):
-            ":return: N diagonal of covariance matrix."
-            return self.base_kernel.Kdiag(NL_patch)
-        return tf.map_fn(Kdiag, PNL_patches)
-
-    def _patch_length(self):
-        """The number of elements in a patch."""
-        return self.feature_maps * np.prod(self.patch_shape)
-
-    def _patch_count(self):
-        """The amount of patches in one image."""
-        return (self.input_size[0] - self.patch_shape[0] + 1) * (
-                self.input_size[1] - self.patch_shape[1] + 1) * self.feature_maps
-
 class ConvLayer(Layer, PatchMixin):
     def __init__(self, base_kernel, mean_function, feature=None,
             input_size=None,
@@ -81,12 +17,14 @@ class ConvLayer(Layer, PatchMixin):
         super().__init__(**kwargs)
         self.base_kernel = base_kernel
         self.input_size = input_size
+        self.filter_size = filter_size
+        self.stride = 1
+        self.dilation = 1
+        self.patch_shape = (filter_size, filter_size)
         self.feature_maps = feature_maps
-
-        self.conv_kernel = MultiOutputConvKernel(base_kernel, feature, input_size, filter_size, feature_maps)
-
-        self.patch_count = self.conv_kernel._patch_count()
-        self.patch_length = self.conv_kernel._patch_length()
+        self.patch_count = self._patch_count()
+        self.patch_length = self._patch_length()
+        self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
 
         self.white = white
 
@@ -110,6 +48,53 @@ class ConvLayer(Layer, PatchMixin):
 
         self._build_cholesky()
 
+    def Kuu(self):
+        return self.base_kernel.K(self.feature.Z) + tf.eye(self.num_inducing,
+                dtype=settings.float_type) * settings.jitter
+
+    def Kuf(self, ML_Z, NHWC_X):
+        """ Returns covariance between inducing points and input.
+        Output shape: patch_count x M x N
+        """
+        # L: patch_length * feature_maps
+        NPL_patches = self.extract_patches(NHWC_X)
+
+        N = tf.shape(NHWC_X)[0]
+        JL_patches = tf.reshape(NPL_patches, [N * self.patch_count, self.patch_length])
+        MJ_Kzx = self.base_kernel.K(ML_Z, JL_patches)
+
+        check_shape = tf.assert_equal(tf.shape(MJ_Kzx)[0], self.num_inducing)
+        check_shape2 = tf.assert_equal(tf.shape(MJ_Kzx)[1], self.patch_count * N)
+        check_rank = tf.assert_rank(MJ_Kzx, 2)
+
+        with tf.control_dependencies([check_rank, check_shape, check_shape2]):
+            MNP_Kzx = tf.reshape(MJ_Kzx, [self.num_inducing, N, self.patch_count])
+            PMN_Kzx = tf.transpose(MNP_Kzx, [2, 0, 1])
+
+            return PMN_Kzx
+
+    def Kff(self, NHWC_X):
+        """Kff returns auto covariance of the input.
+        :return: O (== P) x N x N covariance matrices.
+        """
+        NPL_patches = self.extract_patches(NHWC_X)
+        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
+        PNN_Knn = self.base_kernel.K(NPL_patches)
+        check_rank = tf.assert_rank(PNN_Knn, 3)
+        with tf.control_dependencies([check_rank]):
+            return PNN_Knn
+
+    def Kdiag(self, NHWC_X):
+        """
+        :return: O X N diagonals of the covariance matrices.
+        """
+        NPL_patches = self.extract_patches(NHWC_X)
+        PNL_patches = tf.transpose(NPL_patches, [1, 0, 2])
+        def Kdiag(NL_patch):
+            ":return: N diagonal of covariance matrix."
+            return self.base_kernel.Kdiag(NL_patch)
+        return tf.map_fn(Kdiag, PNL_patches)
+
     def conditional_ND(self, ND_X, full_cov=False):
         """
         Returns the mean and the variance of q(f|m, S) = N(f| Am, K_nn + A(S - K_mn)A^T)
@@ -124,7 +109,7 @@ class ConvLayer(Layer, PatchMixin):
 
         N = tf.shape(ND_X)[0]
         NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
-        OMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, NHWC_X)
+        OMN_Kuf = self.Kuf(self.feature.Z, NHWC_X)
 
         OMN_A = tf.matrix_triangular_solve(self.OMM_Lu, OMN_Kuf, lower=True)
         if not self.white:
@@ -144,11 +129,11 @@ class ConvLayer(Layer, PatchMixin):
         ONN_additive = ONM_A @ OMM_SK @ OMN_A
 
         if full_cov:
-            ONN_Knn = self.conv_kernel.Kff(NHWC_X)
+            ONN_Knn = self.Kff(NHWC_X)
             ONN_var = ONN_Knn + ONN_additive
             var = tf.transpose(ONN_var, [1, 2, 0])
         else:
-            ON_Kdiag = self.conv_kernel.Kdiag(NHWC_X)
+            ON_Kdiag = self.Kdiag(NHWC_X)
             ON_diag = tf.matrix_diag_part(ONN_additive)
 
             ON_var = ON_Kdiag + ON_diag
@@ -194,16 +179,25 @@ class ConvLayer(Layer, PatchMixin):
 
     def _init_q_S(self):
         with gpflow.params_as_tensors_for(self.feature):
-            MM_Ku = self.conv_kernel.Kuu()
+            MM_Ku = self.Kuu()
             MM_Lu = tf.linalg.cholesky(MM_Ku)
             MM_Lu = self.enquire_session().run(MM_Lu)
             return MM_Lu
 
     def _build_cholesky(self):
         with gpflow.params_as_tensors_for(self.feature):
-            self.MM_Ku = self.conv_kernel.Kuu()
+            self.MM_Ku = self.Kuu()
             self.MM_Lu = tf.linalg.cholesky(self.MM_Ku)
             self.OMM_Lu = tf.tile(self.MM_Lu[None, :, :], [self.patch_count, 1, 1])
             self.OMM_Ku = tf.tile(self.MM_Ku[None, :, :], [self.patch_count, 1, 1])
+
+    def _patch_length(self):
+        """The number of elements in a patch."""
+        return self.feature_maps * np.prod(self.patch_shape)
+
+    def _patch_count(self):
+        """The amount of patches in one image."""
+        return (self.input_size[0] - self.patch_shape[0] + 1) * (
+                self.input_size[1] - self.patch_shape[1] + 1) * self.feature_maps
 
 
