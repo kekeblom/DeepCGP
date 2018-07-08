@@ -32,7 +32,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
             # Returns covariance matrix of size M x N.
             return self.base_kernel.K(ML_Z, NL_patches)
 
-        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches)
+        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches, parallel_iterations=self.patch_count)
         return PMN_Kzx
 
     def Kff(self, PNL_patches):
@@ -42,7 +42,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
         def patch_auto_covariance(NL_patches):
             # Returns covariance matrix of size N x N.
             return self.base_kernel.K(NL_patches)
-        return tf.map_fn(patch_auto_covariance, PNL_patches)
+        return tf.map_fn(patch_auto_covariance, PNL_patches, parallel_iterations=self.patch_count)
 
     def Kdiag(self, PNL_patches):
         """
@@ -51,7 +51,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
         def Kdiag(NL_patch):
             ":return: N diagonal of covariance matrix."
             return self.base_kernel.Kdiag(NL_patch)
-        return tf.map_fn(Kdiag, PNL_patches)
+        return tf.map_fn(Kdiag, PNL_patches, parallel_iterations=self.patch_count)
 
 class ConvLayer(Layer):
     def __init__(self, base_kernel, mean_function, feature=None,
@@ -93,7 +93,7 @@ class ConvLayer(Layer):
 
     def conditional_ND(self, ND_X, full_cov=False):
         """
-        Returns the mean and the variance of q(f|m, S) = N(f| Am, K_nn + A(S - K_mn)A^T)
+        Returns the mean and the variance of q(f|m, S) = N(f| Am, K_nn + A(S - K_mm)A^T)
         where A = K_nm @ K_mm^{-1}
 
         dimension O: num_outputs (== patch_count)
@@ -104,31 +104,39 @@ class ConvLayer(Layer):
         """
 
         N = tf.shape(ND_X)[0]
+        P = self.patch_count
         NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
         PNL_patches = self.conv_kernel.extract_patches_PNL(NHWC_X)
 
-        PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
-
         MM_Kuu = self.conv_kernel.Kuu(self.feature.Z)
         MM_Lu = tf.linalg.cholesky(MM_Kuu)
-        PMM_Lu = tf.tile(MM_Lu[None, :, :], [self.patch_count, 1, 1])
+        IMM_q_S = tf.matmul(self.IMM_q_sqrt, self.IMM_q_sqrt, transpose_b=True)
 
-        PMN_A = tf.matrix_triangular_solve(PMM_Lu, PMN_Kuf, lower=True)
-        if not self.white:
-            PMM_Lu_t = tf.transpose(PMM_Lu, [0, 2, 1])
-            PMN_A = tf.matrix_triangular_solve(PMM_Lu_t, PMN_A, lower=False)
+        def solve_A(MN_Kuf):
+            MN_A = tf.matrix_triangular_solve(MM_Lu, MN_Kuf, lower=True)
+            if not self.white:
+                MM_Lu_t = tf.transpose(MM_Lu, [1, 0])
+                MN_A = tf.matrix_triangular_solve(MM_Lu_t, MN_A, lower=False)
+            return MN_A
+
+        PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
+        PMN_A = tf.map_fn(solve_A, PMN_Kuf, parallel_iterations=self.patch_count)
 
         PNM_A = tf.transpose(PMN_A, [0, 2, 1])
 
-        PM1_q_mu = tf.tile(self.M1_q_mu[None, :, :], [self.patch_count, 1, 1])
-        PN_mean = tf.matmul(PNM_A, PM1_q_mu)[:, :, 0]
+        def compute_mean(NM_A):
+            return tf.matmul(NM_A, self.M1_q_mu)
+
+        PN_mean = tf.map_fn(compute_mean, PNM_A, parallel_iterations=self.patch_count)[:, :, 0]
         NP_mean = tf.transpose(PN_mean, [1, 0])
 
-        IMM_q_S = tf.matmul(self.IMM_q_sqrt, self.IMM_q_sqrt, transpose_b=True)
 
-        PMM_SK = tf.tile(IMM_q_S - MM_Kuu, [self.patch_count, 1, 1])
+        MM_B = IMM_q_S[0, :, :] - MM_Kuu
 
-        PNN_additive = PNM_A @ PMM_SK @ PMN_A
+        def compute_additive(NM_A):
+            return tf.matmul(tf.matmul(NM_A, MM_B), NM_A, transpose_b=True)
+
+        PNN_additive = tf.map_fn(compute_additive, PNM_A, parallel_iterations=self.patch_count)
 
         if full_cov:
             PNN_Knn = self.conv_kernel.Kff(PNL_patches)
@@ -160,23 +168,10 @@ class ConvLayer(Layer):
             KL += tf.reduce_sum(tf.matrix_diag_part(self.IMM_q_sqrt))
             KL += tf.reduce_sum(tf.square(self.M1_q_mu))
             KL -= tf.reduce_sum(tf.matrix_diag_part(self.MM_Lu))
-            return 0.5 * KL * self.patch_count # Once kfor each output.
+            return 0.5 * KL
         else:
-            # KL = -k
+            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, self.MM_Ku_prior)
 
-            # MM_q_sqrt = self.IMM_q_sqrt[0, :, :]
-            # MM_q_S = tf.matmul(MM_q_sqrt, MM_q_sqrt, transpose_b=True)
-            # # Trace term
-            # MM_trace_inner = tf.cholesky_solve(self.MM_Lu, MM_q_S)
-            # KL += tf.trace(MM_trace_inner)
-            # # q_mu^T @ Kuu @ q_mu
-            # KL += tf.reduce_sum(tf.matmul(self.M1_q_mu, self.MM_Ku_prior, transpose_a=True) @ self.M1_q_mu, [0, 1])
-            # # log determinant term
-            # KL += 2 * tf.reduce_sum(tf.log(tf.diag_part(self.MM_Lu)))
-            # KL -= 2 * tf.reduce_sum(tf.log(tf.diag_part(MM_q_sqrt)))
-
-            # return 0.5 * KL * self.patch_count
-            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, self.MM_Ku_prior) * self.patch_count
 
     def _build_prior_cholesky(self):
         self.MM_Ku_prior = self.conv_kernel.Kuu(self.feature.Z.parameter_tensor)
