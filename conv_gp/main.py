@@ -37,9 +37,9 @@ class Conv2dMean(gpflow.mean_functions.MeanFunction):
 
     def _init_filter(self):
         # Only supports square filters with odd size for now.
-        eye = np.eye(self.filter_size, dtype=gpflow.settings.float_type)
-        eye[self.filter_size // 2, self.filter_size // 2] = 1.0
-        return np.tile(eye[:, :, None, None], [1, 1, self.feature_maps, self.feature_maps])
+        identity_filter = np.zeros((self.filter_size, self.filter_size), dtype=gpflow.settings.float_type)
+        identity_filter[self.filter_size // 2, self.filter_size // 2] = 1.0
+        return np.tile(identity_filter[:, :, None, None], [1, 1, self.feature_maps, self.feature_maps])
 
 
 class MNIST(object):
