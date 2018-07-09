@@ -44,10 +44,14 @@ class LearningRateLogger(Logger):
         sess = model.enquire_session()
         return sess.run(self.learning_rate_op)
 
+    def tensorboard_op(self, model):
+        tf.summary.scalar(self.title, self.learning_rate_op)
+
 class AccuracyLogger(Logger):
     def __init__(self, X_test, Y_test):
         self.title = 'test_accuracy'
         self.X_test, self.Y_test = X_test, Y_test
+        self.prev_accuracy = None
 
     def __call__(self, model):
         correct = 0
@@ -62,7 +66,9 @@ class AccuracyLogger(Logger):
             probabilities = mean_samples.mean(axis=0)
             predicted_class = probabilities.argmax(axis=1)[:, None]
             correct += (predicted_class == Y).sum()
-        return correct / self.Y_test.size
+        accuracy = correct / self.Y_test.size
+        self.prev_accuracy = accuracy
+        return accuracy
 
 class LogLikelihoodLogger(Logger):
     def __init__(self):
@@ -85,6 +91,24 @@ class LogLikelihoodLogger(Logger):
             log_likelihood += batch_likelihood
         return log_likelihood
 
+class LayerOutputLogger(object):
+    def __init__(self):
+        self.title = 'layer_output'
+
+    def tensorboard_op(self, model):
+        X = model.X.parameter_tensor
+        random_index = tf.random_uniform([1], 0, tf.shape(X)[0], dtype=tf.int32)[0]
+        x = X[random_index, :]
+
+        input_image = tf.reshape(x, [1, 28, 28, 1])
+        tf.summary.image("{}:input_image".format(self.title), input_image)
+
+        Fs, Fmeans, _ = model.propagate(x[None])
+        sample_image = tf.reshape(Fs[0], [1, 24, 24, 1])
+        tf.summary.image("{}:sample".format(self.title), sample_image)
+        mean_image = tf.reshape(Fmeans[0], [1, 24, 24, 1])
+        tf.summary.image("{}:mean".format(self.title), mean_image)
+
 class ModelSaver(object):
     def __init__(self, model, test_dir):
         self.model = model
@@ -100,23 +124,37 @@ class ModelSaver(object):
         sess = self.model.enquire_session()
         saver.save(sess, path)
 
-class Log(object):
+class LogBase(object):
+    def _log_dir(self, log_dir, run_name):
+        path = os.path.join(log_dir, run_name)
+        ensure_dir(path)
+        return path
+
+class TensorboardLog(LogBase):
+    def __init__(self, log_dir, run_name, loggers, model):
+        log_dir = self._log_dir(log_dir, run_name)
+        self.writer = tf.summary.FileWriter(log_dir, model.enquire_graph())
+        self.loggers = loggers
+        self.op = self._collect_ops(model)
+
+    def _collect_ops(self, model):
+        for logger in self.loggers:
+            if hasattr(logger, "tensorboard_op"):
+                logger.tensorboard_op(model)
+        return tf.summary.merge_all()
+
+    def write_entry(self, model):
+        sess = model.enquire_session()
+        summary = sess.run([self.op])
+        self.writer.add_summary(summary[0])
+
+class Log(LogBase):
     def __init__(self, log_dir, run_name, loggers):
         self.loggers = loggers
         self.log_dir = self._log_dir(log_dir, run_name)
         self._start_log_file(run_name)
         self._write_headers()
         self.entries = 0
-
-    def _log_dir(self, log_dir, run_name):
-        path = os.path.join(log_dir, run_name)
-        # Log directory is created automatically.
-        # If an experiment has already been run with the same name, it's probably
-        # a mistake and we should blow up.
-        if os.path.exists(path):
-            raise OSError("Result directory already exists.")
-        ensure_dir(path)
-        return path
 
     def _write_headers(self):
         self.headers = ["Entry"] + [l.title for l in self.loggers]

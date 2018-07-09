@@ -125,11 +125,10 @@ class ConvLayer(Layer):
         PNM_A = tf.transpose(PMN_A, [0, 2, 1])
 
         def compute_mean(NM_A):
-            return tf.matmul(NM_A, self.M1_q_mu)
+            return tf.matmul(NM_A, self.M1_q_mu)[:, 0]
 
-        PN_mean = tf.map_fn(compute_mean, PNM_A, parallel_iterations=self.patch_count)[:, :, 0]
+        PN_mean = tf.map_fn(compute_mean, PNM_A, parallel_iterations=self.patch_count)
         NP_mean = tf.transpose(PN_mean, [1, 0])
-
 
         MM_B = IMM_q_S[0, :, :] - MM_Kuu
 
@@ -149,7 +148,7 @@ class ConvLayer(Layer):
             PN_var = PN_Kdiag + PN_diag
             var = tf.transpose(PN_var, [1, 0])
 
-        return NP_mean + self.mean_function(ND_X), var
+        return NP_mean + self.mean_function(NHWC_X), var
 
     def KL(self):
         """

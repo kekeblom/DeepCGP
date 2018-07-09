@@ -6,25 +6,40 @@ import observations
 import utils
 from sklearn import preprocessing, decomposition, cluster
 from gpflow import settings, features, kernels
+from gpflow.decors import params_as_tensors
 from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import SVGP_Layer
 from kernels import ConvKernel, PatchInducingFeature
 from layers import ConvLayer
 
-def pca(X, dim_out):
-    """pca computes the pca mapping of X with output dim_out.
-
-    :param X: input data of shape N x features
-    :param dim_out: pca transform of shape features x dim_out
-    """
-    pca = decomposition.PCA(n_components=dim_out)
-    pca.fit(X)
-    return pca.components_.T
-
 def select_initial_inducing_points(X, M):
     kmeans = cluster.KMeans(n_clusters=M, init='k-means++', n_jobs=-1)
     kmeans.fit(X)
     return kmeans.cluster_centers_
+
+class Conv2dMean(gpflow.mean_functions.MeanFunction):
+    def __init__(self, filter_size, feature_maps):
+        super().__init__()
+        self.filter_size = filter_size
+        self.feature_maps = feature_maps
+        self.conv_filter = gpflow.Param(self._init_filter())
+
+    @params_as_tensors
+    def __call__(self, NHWC_X):
+        convolved = tf.nn.conv2d(NHWC_X, self.conv_filter, [1, 1, 1, 1], "VALID",
+                data_format="NHWC")
+        NHWC = tf.shape(NHWC_X)
+        return tf.reshape(convolved, [NHWC[0], self._output_length(NHWC)])
+
+    def _output_length(self, NHWC):
+        return (NHWC[1] - self.filter_size + 1) * (
+                NHWC[1] - self.filter_size + 1) * self.feature_maps
+
+    def _init_filter(self):
+        # Only supports square filters with odd size for now.
+        eye = np.eye(self.filter_size, dtype=gpflow.settings.float_type)
+        eye[self.filter_size // 2, self.filter_size // 2] = 1.0
+        return np.tile(eye[:, :, None, None], [1, 1, self.feature_maps, self.feature_maps])
 
 
 class MNIST(object):
@@ -47,6 +62,7 @@ class MNIST(object):
 
     def _log_step(self):
         entry = self.log.write_entry(self.model)
+        self.tensorboard_log.write_entry(self.model)
         print(entry)
 
     def _optimize(self):
@@ -59,11 +75,12 @@ class MNIST(object):
         conv_features = PatchInducingFeature.from_images(self.X_train.reshape(-1, 28, 28), self.flags.M,
                 filter_size)
         h1_out = 576
-        conv_pca = pca(self.X_train, h1_out)
-        conv_mean = gpflow.mean_functions.Linear(conv_pca)
+        conv_mean = Conv2dMean(filter_size, 1)
         conv_mean.set_trainable(False)
 
-        Z_rbf = select_initial_inducing_points(self.X_train @ conv_pca, self.flags.M)
+        sess = conv_mean.enquire_session()
+        H1_X = sess.run(conv_mean(self.X_train.reshape(-1, 28, 28, 1)))
+        Z_rbf = select_initial_inducing_points(H1_X, self.flags.M)
         rbf_features = features.InducingPoints(Z_rbf)
 
         layers = [
@@ -130,7 +147,16 @@ class MNIST(object):
             utils.AccuracyLogger(self.X_test, self.Y_test),
             utils.LogLikelihoodLogger()
         ]
-        self.log = utils.Log(self.flags.log_dir, self.flags.name, loggers)
+        self.log = utils.Log(self.flags.log_dir,
+                self.flags.name,
+                loggers)
+        tensorboard_loggers = loggers + [
+                utils.LayerOutputLogger()
+                ]
+        self.tensorboard_log = utils.TensorboardLog(self.flags.tensorboard_dir,
+                self.flags.name,
+                tensorboard_loggers,
+                self.model)
         self.log.write_flags(self.flags)
 
     def _write_initial_inducing_points(self):
@@ -157,6 +183,7 @@ def read_args():
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--batch-size', type=int, default=128,
             help="Minibatch size to use in optimization.")
+    parser.add_argument('--tensorboard_dir', type=str, default='/tmp/mnist/tensorboard')
     return parser.parse_args()
 
 def train_steps(flags):
