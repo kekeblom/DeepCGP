@@ -123,6 +123,7 @@ class MNIST(object):
         self.Y_train = self.Y_train.reshape(-1, 1)
         self.Y_test = self.Y_test.reshape(-1, 1)
         self._select_training_points()
+        self._select_test_points()
         self._preprocess_data()
 
     def _select_training_points(self):
@@ -130,17 +131,22 @@ class MNIST(object):
         self.X_train = self.X_train[chosen, :]
         self.Y_train = self.Y_train[chosen, :]
 
-    def _preprocess_data(self):
-        self.X_train = self._change_data_range(self.X_train)
-        self.X_test = self._change_data_range(self.X_test)
-        self.X_transform = preprocessing.StandardScaler()
-        self.X_train = self.X_transform.fit_transform(self.X_train)
-        self.X_test = self.X_transform.transform(self.X_test)
+    def _select_test_points(self):
+        arange = np.arange(0, len(self.X_test))
+        chosen = np.random.choice(arange, self.flags.test_size, replace=False)
+        self.X_test = self.X_test[chosen, :]
+        self.Y_test = self.Y_test[chosen, :]
 
-    def _change_data_range(self, data):
-        return (data / 255.0).astype(settings.float_type)
+    def _preprocess_data(self):
+        self.X_transform = preprocessing.StandardScaler()
+        self.X_train = self.X_transform.fit_transform(self.X_train).astype(settings.float_type)
+        self.X_test = self.X_transform.transform(self.X_test).astype(settings.float_type)
 
     def _setup_logger(self):
+        self._init_logger()
+        self._init_tensorboard()
+
+    def _init_logger(self):
         loggers = [
             utils.GlobalStepLogger(),
             utils.LearningRateLogger(self.lr_schedule),
@@ -150,14 +156,15 @@ class MNIST(object):
         self.log = utils.Log(self.flags.log_dir,
                 self.flags.name,
                 loggers)
-        tensorboard_loggers = loggers + [
-                utils.LayerOutputLogger()
-                ]
-        self.tensorboard_log = utils.TensorboardLog(self.flags.tensorboard_dir,
-                self.flags.name,
-                tensorboard_loggers,
-                self.model)
         self.log.write_flags(self.flags)
+
+    def _init_tensorboard(self):
+        sample_task = utils.LayerOutputLogger(self.model)
+        model_parameter_task = utils.ModelParameterLogger(self.model)
+
+        tasks = [sample_task, model_parameter_task]
+        self.tensorboard_log = utils.TensorBoardLog(tasks, self.flags.tensorboard_dir, self.flags.name,
+                self.model)
 
     def _write_initial_inducing_points(self):
         self.log.write_inducing_points(self.model, "z_init.npy")
@@ -178,12 +185,13 @@ def read_args():
             help="The program uses exponential learning rate decay with 0.1 decay every lr-decay-steps.")
     parser.add_argument('--test-every', type=int, default=5000,
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
+    parser.add_argument('--test-size', type=int, default=10000)
     parser.add_argument('--log-dir', type=str, default='results',
             help="Directory to write the results to.")
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--batch-size', type=int, default=128,
             help="Minibatch size to use in optimization.")
-    parser.add_argument('--tensorboard_dir', type=str, default='/tmp/mnist/tensorboard')
+    parser.add_argument('--tensorboard-dir', type=str, default='/tmp/mnist/tensorboard')
     return parser.parse_args()
 
 def train_steps(flags):
@@ -192,8 +200,6 @@ def train_steps(flags):
     return math.ceil(flags.lr_decay_steps * decay_count / flags.test_every)
 
 def main():
-    np.random.seed(5033)
-
     flags = read_args()
 
     experiment = MNIST(flags)

@@ -8,7 +8,7 @@ from kernels import PatchMixin, PatchInducingFeature
 
 class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
     def __init__(self, base_kernel, input_size, filter_size, feature_maps):
-        super().__init__(input_dim=np.prod(input_size))
+        super().__init__(input_dim=np.prod(input_size) * feature_maps)
         self.base_kernel = base_kernel
         self.input_size = input_size
         self.filter_size = filter_size
@@ -173,12 +173,12 @@ class ConvLayer(Layer):
 
 
     def _build_prior_cholesky(self):
-        self.MM_Ku_prior = self.conv_kernel.Kuu(self.feature.Z.parameter_tensor)
+        self.MM_Ku_prior = self.conv_kernel.Kuu(self.feature.Z.read_value())
         MM_Lu_prior = tf.linalg.cholesky(self.MM_Ku_prior)
         self.MM_Lu_prior = self.enquire_session().run(MM_Lu_prior)
 
     def _init_q_S(self):
-        MM_Ku = self.conv_kernel.Kuu(self.feature.Z.parameter_tensor)
+        MM_Ku = self.conv_kernel.Kuu(self.feature.Z.read_value())
         MM_Lu = tf.linalg.cholesky(MM_Ku)
         MM_Lu = self.enquire_session().run(MM_Lu)
         return MM_Lu

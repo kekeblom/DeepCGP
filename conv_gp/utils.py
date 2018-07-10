@@ -55,7 +55,7 @@ class AccuracyLogger(Logger):
 
     def __call__(self, model):
         correct = 0
-        batch_size = 32
+        batch_size = 64
         for i in range(len(self.Y_test) // batch_size + 1):
             the_slice = slice(i * batch_size, (i+1) * batch_size)
             X = self.X_test[the_slice]
@@ -79,7 +79,8 @@ class LogLikelihoodLogger(Logger):
         with gpflow.decors.params_as_tensors_for(model):
             X_holder, Y_holder = model.X, model.Y
         log_likelihood = 0.0
-        batches = math.ceil(model.X._value.shape[0] / self.batch_size)
+        compute_on = 5000
+        batches = math.ceil(compute_on / self.batch_size)
         for i in range(batches):
             the_slice = slice(i * self.batch_size, (i+1) * self.batch_size)
             X = model.X._value[the_slice]
@@ -92,22 +93,41 @@ class LogLikelihoodLogger(Logger):
         return log_likelihood
 
 class LayerOutputLogger(object):
-    def __init__(self):
-        self.title = 'layer_output'
+    def __init__(self, model):
+        self.summary = self._build_summary(model)
 
-    def tensorboard_op(self, model):
+    def _build_summary(self, model):
         X = model.X.parameter_tensor
-        random_index = tf.random_uniform([1], 0, tf.shape(X)[0], dtype=tf.int32)[0]
-        x = X[random_index, :]
+        samples = 10
+        random_indices = tf.random_uniform([10], 0, tf.shape(X)[0], dtype=tf.int32)
+        x = tf.gather(X, random_indices, axis=0)
 
-        input_image = tf.reshape(x, [1, 28, 28, 1])
-        tf.summary.image("{}:input_image".format(self.title), input_image)
+        input_image = tf.reshape(x, [samples, 28, 28, 1])
+        input_sum = tf.summary.image("conv_input_image", input_image)
 
-        Fs, Fmeans, _ = model.propagate(x[None])
-        sample_image = tf.reshape(Fs[0], [1, 24, 24, 1])
-        tf.summary.image("{}:sample".format(self.title), sample_image)
-        mean_image = tf.reshape(Fmeans[0], [1, 24, 24, 1])
-        tf.summary.image("{}:mean".format(self.title), mean_image)
+        Fs, Fmeans, _ = model.propagate(x)
+        sample_image = tf.reshape(Fs[0], [samples, 24, 24, 1])
+        sample_sum = tf.summary.image("conv_sample", sample_image)
+        mean_image = tf.reshape(Fmeans[0], [samples, 24, 24, 1])
+        mean_sum = tf.summary.image("conv_mean", mean_image)
+        return tf.summary.merge([input_sum, sample_sum, mean_sum])
+
+class ModelParameterLogger(object):
+    def __init__(self, model):
+        self.summary = self._build_summary(model)
+
+    def _build_summary(self, model):
+        # Variational distribution parameters.
+        q_mu = model.layers[0].M1_q_mu.read_value()
+        q_sqrt = model.layers[0].IMM_q_sqrt.read_value()[0, :, :]
+        q_mu_sum = tf.summary.tensor_summary('q_mu', q_mu)
+        q_sqrt_sum = tf.summary.tensor_summary('q_sqrt', q_sqrt)
+
+        # Inducing points.
+        Z = model.layers[0].feature.Z.read_value()
+        Z_shape = tf.shape(Z)
+        Z_sum = tf.summary.image('Z', tf.reshape(Z, [Z_shape[0], 5, 5, 1]))
+        return tf.summary.merge([q_mu_sum, q_sqrt_sum, Z_sum])
 
 class ModelSaver(object):
     def __init__(self, model, test_dir):
@@ -130,23 +150,19 @@ class LogBase(object):
         ensure_dir(path)
         return path
 
-class TensorboardLog(LogBase):
-    def __init__(self, log_dir, run_name, loggers, model):
-        log_dir = self._log_dir(log_dir, run_name)
+class TensorBoardLog(LogBase):
+    def __init__(self, tasks, tensorboard_dir, name, model):
+        log_dir = self._log_dir(tensorboard_dir, name)
         self.writer = tf.summary.FileWriter(log_dir, model.enquire_graph())
-        self.loggers = loggers
-        self.op = self._collect_ops(model)
+        self._collect_summary(tasks)
 
-    def _collect_ops(self, model):
-        for logger in self.loggers:
-            if hasattr(logger, "tensorboard_op"):
-                logger.tensorboard_op(model)
-        return tf.summary.merge_all()
+    def _collect_summary(self, tasks):
+        summaries = [task.summary for task in tasks]
+        self.summary_op = tf.summary.merge(summaries)
 
     def write_entry(self, model):
-        sess = model.enquire_session()
-        summary = sess.run([self.op])
-        self.writer.add_summary(summary[0])
+        summary = model.enquire_session().run(self.summary_op)
+        self.writer.add_summary(summary)
 
 class Log(LogBase):
     def __init__(self, log_dir, run_name, loggers):
