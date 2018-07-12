@@ -11,6 +11,7 @@ from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import SVGP_Layer
 from kernels import ConvKernel, PatchInducingFeature
 from layers import ConvLayer
+from gpflow.actions import Loop
 
 def select_initial_inducing_points(X, M):
     kmeans = cluster.KMeans(n_clusters=M, init='k-means++', n_jobs=-1)
@@ -68,7 +69,6 @@ class MNIST(object):
     def _optimize(self):
         numiter = self.flags.test_every
         Loop(self.optimizers, stop=numiter)()
-        # self.optimizer.minimize(self.model, maxiter=numiter, global_step=self.global_step)
 
     def _setup_model(self):
         filter_size = 5
