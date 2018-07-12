@@ -128,8 +128,8 @@ class ModelParameterLogger(TensorBoardTask):
 
     def _build_summary(self, model):
         # Variational distribution parameters.
-        q_mu = model.layers[0].M1_q_mu.parameter_tensor
-        q_sqrt = model.layers[0].IMM_q_sqrt.parameter_tensor
+        q_mu = model.layers[0].q_mu.parameter_tensor
+        q_sqrt = model.layers[0].q_sqrt.parameter_tensor
         q_mu_sum = tf.summary.histogram('q_mu', q_mu)
         q_sqrt_sum = tf.summary.histogram('q_sqrt', q_sqrt)
 

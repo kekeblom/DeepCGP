@@ -77,8 +77,8 @@ class ConvLayer(Layer):
         self.num_inducing = len(feature)
         self.num_outputs = self.patch_count
 
-        M1_q_mu = np.zeros((self.num_inducing, 1), dtype=settings.float_type)
-        self.M1_q_mu = gpflow.Param(M1_q_mu)
+        q_mu = np.zeros((self.num_inducing, 1), dtype=settings.float_type)
+        self.q_mu = gpflow.Param(q_mu)
 
         #TODO figure out if we need whitened vs non-whitened GP.
         if not self.white:
@@ -86,7 +86,7 @@ class ConvLayer(Layer):
         else:
             MM_q_sqrt = np.eye(self.num_inducing, dtype=settings.float_type)
         q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing)
-        self.IMM_q_sqrt = gpflow.Param(MM_q_sqrt[None, :, :], transform=q_sqrt_transform)
+        self.q_sqrt = gpflow.Param(MM_q_sqrt[None, :, :], transform=q_sqrt_transform)
 
         self.mean_function = mean_function
         self._build_prior_cholesky()
@@ -116,7 +116,7 @@ class ConvLayer(Layer):
 
         def conditional(tupled):
             MN_Kuf, Knn = tupled
-            return conditionals.base_conditional(MN_Kuf, MM_Kuu, Knn, self.M1_q_mu, full_cov=full_cov, q_sqrt=self.IMM_q_sqrt, white=self.white)
+            return conditionals.base_conditional(MN_Kuf, MM_Kuu, Knn, self.q_mu, full_cov=full_cov, q_sqrt=self.q_sqrt, white=self.white)
 
         PN_mean, PNN_var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
                 parallel_iterations=self.patch_count)
@@ -135,9 +135,9 @@ class ConvLayer(Layer):
         :return: KL divergence from q(u) = N(q_mu, q_s) to p(u) ~ N(0, Kuu), independently for each GP
         """
         if self.white:
-            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, K=None)
+            return gauss_kl(self.q_mu, self.q_sqrt, K=None)
         else:
-            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, self.MM_Ku_prior)
+            return gauss_kl(self.q_mu, self.q_sqrt, self.MM_Ku_prior)
 
 
     def _build_prior_cholesky(self):

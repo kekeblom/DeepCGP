@@ -54,7 +54,6 @@ class MNIST(object):
         # self._write_initial_inducing_points()
 
     def conclude(self):
-        # self.log.write_model(self.model)
         self.log.close()
 
     def train_step(self):
@@ -112,7 +111,7 @@ class MNIST(object):
 
         self.optimizers = []
         if self.flags.optimizer == "NatGrad":
-            variational_parameters = [[self.model.layers[0].M1_q_mu, self.model.layers[0].IMM_q_sqrt],
+            variational_parameters = [[self.model.layers[0].q_mu, self.model.layers[0].q_sqrt],
                     [self.model.layers[1].q_mu, self.model.layers[1].q_sqrt]]
 
             for params in variational_parameters:
