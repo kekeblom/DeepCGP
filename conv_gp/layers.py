@@ -8,7 +8,7 @@ from kernels import PatchMixin, PatchInducingFeature
 
 class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
     def __init__(self, base_kernel, input_size, filter_size, feature_maps):
-        super().__init__(input_dim=np.prod(input_size) * feature_maps)
+        gpflow.kernels.Kernel.__init__(self, input_dim=int(np.prod(input_size) * feature_maps))
         self.base_kernel = base_kernel
         self.input_size = input_size
         self.filter_size = filter_size
@@ -102,72 +102,40 @@ class ConvLayer(Layer):
         :param full_cov: if true, var is in (N, N, D_out) instead of (N, D_out) i.e. we
         also compute entries outside the diagonal.
         """
-
         N = tf.shape(ND_X)[0]
-        P = self.patch_count
         NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
         PNL_patches = self.conv_kernel.extract_patches_PNL(NHWC_X)
 
         MM_Kuu = self.conv_kernel.Kuu(self.feature.Z)
-        MM_Lu = tf.linalg.cholesky(MM_Kuu)
-        IMM_q_S = tf.matmul(self.IMM_q_sqrt, self.IMM_q_sqrt, transpose_b=True)
-
-        def solve_A(MN_Kuf):
-            MN_A = tf.matrix_triangular_solve(MM_Lu, MN_Kuf, lower=True)
-            if not self.white:
-                MM_Lu_t = tf.transpose(MM_Lu, [1, 0])
-                MN_A = tf.matrix_triangular_solve(MM_Lu_t, MN_A, lower=False)
-            return MN_A
-
         PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
-        PMN_A = tf.map_fn(solve_A, PMN_Kuf, parallel_iterations=self.patch_count)
-
-        PNM_A = tf.transpose(PMN_A, [0, 2, 1])
-
-        def compute_mean(NM_A):
-            return tf.matmul(NM_A, self.M1_q_mu)[:, 0]
-
-        PN_mean = tf.map_fn(compute_mean, PNM_A, parallel_iterations=self.patch_count)
-        NP_mean = tf.transpose(PN_mean, [1, 0])
-
-        MM_B = IMM_q_S[0, :, :] - MM_Kuu
-
-        def compute_additive(NM_A):
-            return tf.matmul(tf.matmul(NM_A, MM_B), NM_A, transpose_b=True)
-
-        PNN_additive = tf.map_fn(compute_additive, PNM_A, parallel_iterations=self.patch_count)
 
         if full_cov:
-            PNN_Knn = self.conv_kernel.Kff(PNL_patches)
-            PNN_var = PNN_Knn + PNN_additive
-            var = tf.transpose(PNN_var, [1, 2, 0])
+            P_Knn = self.conv_kernel.Kff(PNL_patches)
         else:
-            PN_Kdiag = self.conv_kernel.Kdiag(PNL_patches)
-            PN_diag = tf.matrix_diag_part(PNN_additive)
+            P_Knn = self.conv_kernel.Kdiag(PNL_patches)
 
-            PN_var = PN_Kdiag + PN_diag
-            var = tf.transpose(PN_var, [1, 0])
+        def conditional(tupled):
+            MN_Kuf, Knn = tupled
+            return conditionals.base_conditional(MN_Kuf, MM_Kuu, Knn, self.M1_q_mu, full_cov=full_cov, q_sqrt=self.IMM_q_sqrt, white=self.white)
 
+        PN_mean, PNN_var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
+                parallel_iterations=self.patch_count)
+        NP_mean = tf.transpose(PN_mean[:, :, 0], [1, 0])
+        if full_cov:
+            var = tf.transpose(PNN_var[:, 0, :, :], [2, 1, 0])
+        else:
+            var = tf.transpose(PNN_var[:, :, 0], [1, 0])
         return NP_mean + self.mean_function(NHWC_X), var
 
     def KL(self):
         """
         The KL divergence from the variational distribution to the prior.
         q ~ N(\mu, S)
-        if white:
-            KL(q||N(0, I)) = 0.5 * (tr(S) + \mu^T\mu - k - \sum diag(S))
-        else:
-            TODO
 
         :return: KL divergence from q(u) = N(q_mu, q_s) to p(u) ~ N(0, Kuu), independently for each GP
         """
-        k = self.num_inducing # Dimensionality of the distributions.
         if self.white:
-            KL = -k
-            KL += tf.reduce_sum(tf.matrix_diag_part(self.IMM_q_sqrt))
-            KL += tf.reduce_sum(tf.square(self.M1_q_mu))
-            KL -= tf.reduce_sum(tf.matrix_diag_part(self.MM_Lu))
-            return 0.5 * KL
+            return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, K=None)
         else:
             return gauss_kl(self.M1_q_mu, self.IMM_q_sqrt, self.MM_Ku_prior)
 
