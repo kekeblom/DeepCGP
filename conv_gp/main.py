@@ -67,7 +67,8 @@ class MNIST(object):
 
     def _optimize(self):
         numiter = self.flags.test_every
-        self.optimizer.minimize(self.model, maxiter=numiter, global_step=self.global_step)
+        Loop(self.optimizers, stop=numiter)()
+        # self.optimizer.minimize(self.model, maxiter=numiter, global_step=self.global_step)
 
     def _setup_model(self):
         filter_size = 5
@@ -108,10 +109,30 @@ class MNIST(object):
     def _setup_optimizer(self):
         self.global_step = tf.train.get_or_create_global_step()
         self.model.enquire_session().run(self.global_step.initializer)
-        self.lr_schedule = tf.train.exponential_decay(self.flags.lr, self.global_step,
-                decay_steps=self.flags.lr_decay_steps,
-                decay_rate=0.1)
-        self.optimizer = gpflow.train.AdamOptimizer(learning_rate=self.lr_schedule)
+
+        self.optimizers = []
+        if self.flags.optimizer == "NatGrad":
+            variational_parameters = [[self.model.layers[0].M1_q_mu, self.model.layers[0].IMM_q_sqrt],
+                    [self.model.layers[1].q_mu, self.model.layers[1].q_sqrt]]
+
+            for params in variational_parameters:
+                for param in params:
+                    param.set_trainable(False)
+
+            nat_grad = gpflow.train.NatGradOptimizer(gamma=0.001).make_optimize_action(self.model,
+                    var_list=variational_parameters)
+            self.optimizers.append(nat_grad)
+
+        if self.flags.optimizer == "SGD":
+            opt = gpflow.train.GradientDescentOptimizer(learning_rate=self.flags.lr)\
+                    .make_optimize_action(self.model, global_step=self.global_step)
+        elif self.flags.optimizer == "Adam":
+            opt = gpflow.train.AdamOptimizer(learning_rate=self.flags.lr).make_optimize_action(self.model,
+                    global_step=self.global_step)
+        self.optimizers.append(opt)
+
+        if self.flags.optimizer not in ["Adam", "NatGrad", "SGD"]:
+            raise ValueError("Not a supported optimizer. Try Adam or NatGrad.")
 
     def _load_data(self):
         if self.flags.fashion:
@@ -149,9 +170,7 @@ class MNIST(object):
     def _init_logger(self):
         loggers = [
             utils.GlobalStepLogger(),
-            utils.LearningRateLogger(self.lr_schedule),
             utils.AccuracyLogger(self.X_test, self.Y_test),
-            utils.LogLikelihoodLogger()
         ]
         self.log = utils.Log(self.flags.log_dir,
                 self.flags.name,
@@ -161,10 +180,11 @@ class MNIST(object):
     def _init_tensorboard(self):
         sample_task = utils.LayerOutputLogger(self.model)
         model_parameter_task = utils.ModelParameterLogger(self.model)
+        likelihood = utils.LogLikelihoodLogger()
 
-        tasks = [sample_task, model_parameter_task]
+        tasks = [sample_task, model_parameter_task, likelihood]
         self.tensorboard_log = utils.TensorBoardLog(tasks, self.flags.tensorboard_dir, self.flags.name,
-                self.model)
+                self.model, self.global_step)
 
     def _write_initial_inducing_points(self):
         self.log.write_inducing_points(self.model, "z_init.npy")
@@ -186,12 +206,15 @@ def read_args():
     parser.add_argument('--test-every', type=int, default=5000,
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--test-size', type=int, default=10000)
+    parser.add_argument('--random-inducing', action='store_true', default=False)
     parser.add_argument('--log-dir', type=str, default='results',
             help="Directory to write the results to.")
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--batch-size', type=int, default=128,
             help="Minibatch size to use in optimization.")
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/mnist/tensorboard')
+    parser.add_argument('--optimizer', type=str, default='Adam',
+            help="Either Adam or NatGrad")
     return parser.parse_args()
 
 def train_steps(flags):

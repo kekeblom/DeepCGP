@@ -5,6 +5,7 @@ import gpflow
 import toml
 import numpy as np
 import tensorflow as tf
+from gpflow import settings
 
 def ensure_dir(path):
     if not os.path.exists(path):
@@ -70,10 +71,16 @@ class AccuracyLogger(Logger):
         self.prev_accuracy = accuracy
         return accuracy
 
-class LogLikelihoodLogger(Logger):
+class TensorBoardTask(object):
+    def __call__(self, model):
+        return model.enquire_session().run(self.summary)
+
+class LogLikelihoodLogger(TensorBoardTask):
     def __init__(self):
         self.title = 'train_log_likelihood'
         self.batch_size = 512
+        self.likelihood_holder = tf.placeholder(settings.float_type, shape=())
+        self.summary = tf.summary.scalar(self.title, self.likelihood_holder)
 
     def __call__(self, model):
         with gpflow.decors.params_as_tensors_for(model):
@@ -90,9 +97,12 @@ class LogLikelihoodLogger(Logger):
                 Y_holder: Y
                 })
             log_likelihood += batch_likelihood
-        return log_likelihood
 
-class LayerOutputLogger(object):
+        return model.enquire_session().run(self.summary, feed_dict={
+            self.likelihood_holder: log_likelihood
+        })
+
+class LayerOutputLogger(TensorBoardTask):
     def __init__(self, model):
         self.summary = self._build_summary(model)
 
@@ -112,21 +122,21 @@ class LayerOutputLogger(object):
         mean_sum = tf.summary.image("conv_mean", mean_image)
         return tf.summary.merge([input_sum, sample_sum, mean_sum])
 
-class ModelParameterLogger(object):
+class ModelParameterLogger(TensorBoardTask):
     def __init__(self, model):
         self.summary = self._build_summary(model)
 
     def _build_summary(self, model):
         # Variational distribution parameters.
-        q_mu = model.layers[0].M1_q_mu.read_value()
-        q_sqrt = model.layers[0].IMM_q_sqrt.read_value()[0, :, :]
-        q_mu_sum = tf.summary.tensor_summary('q_mu', q_mu)
-        q_sqrt_sum = tf.summary.tensor_summary('q_sqrt', q_sqrt)
+        q_mu = model.layers[0].M1_q_mu.parameter_tensor
+        q_sqrt = model.layers[0].IMM_q_sqrt.parameter_tensor
+        q_mu_sum = tf.summary.histogram('q_mu', q_mu)
+        q_sqrt_sum = tf.summary.histogram('q_sqrt', q_sqrt)
 
         # Inducing points.
-        Z = model.layers[0].feature.Z.read_value()
+        Z = model.layers[0].feature.Z.parameter_tensor
         Z_shape = tf.shape(Z)
-        Z_sum = tf.summary.image('Z', tf.reshape(Z, [Z_shape[0], 5, 5, 1]))
+        Z_sum = tf.summary.histogram('Z', Z)
         return tf.summary.merge([q_mu_sum, q_sqrt_sum, Z_sum])
 
 class ModelSaver(object):
@@ -151,18 +161,18 @@ class LogBase(object):
         return path
 
 class TensorBoardLog(LogBase):
-    def __init__(self, tasks, tensorboard_dir, name, model):
+    def __init__(self, tasks, tensorboard_dir, name, model, global_step):
+        self.global_step = global_step
         log_dir = self._log_dir(tensorboard_dir, name)
         self.writer = tf.summary.FileWriter(log_dir, model.enquire_graph())
-        self._collect_summary(tasks)
-
-    def _collect_summary(self, tasks):
-        summaries = [task.summary for task in tasks]
-        self.summary_op = tf.summary.merge(summaries)
+        self.tasks = tasks
 
     def write_entry(self, model):
-        summary = model.enquire_session().run(self.summary_op)
-        self.writer.add_summary(summary)
+        sess = model.enquire_session()
+        summaries = [task(model) for task in self.tasks]
+        step = sess.run(self.global_step)
+        for summary in summaries:
+            self.writer.add_summary(summary, global_step=step)
 
 class Log(LogBase):
     def __init__(self, log_dir, run_name, loggers):
