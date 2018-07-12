@@ -42,6 +42,44 @@ class Conv2dMean(gpflow.mean_functions.MeanFunction):
         identity_filter[self.filter_size // 2, self.filter_size // 2] = 1.0
         return np.tile(identity_filter[:, :, None, None], [1, 1, self.feature_maps, self.feature_maps])
 
+def build_deep_model(flags, X_train, Y_train):
+    filter_size = 5
+    patch_length = filter_size**2
+    if flags.random_inducing:
+        conv_features = PatchInducingFeature(np.random.randn(flags.M, patch_length))
+    else:
+        conv_features = PatchInducingFeature.from_images(X_train.reshape(-1, 28, 28), flags.M,
+            filter_size)
+    h1_out = 576
+    conv_mean = Conv2dMean(filter_size, 1)
+    conv_mean.set_trainable(False)
+
+    sess = conv_mean.enquire_session()
+    H1_X = sess.run(conv_mean(X_train.reshape(-1, 28, 28, 1)))
+    Z_rbf = select_initial_inducing_points(H1_X, flags.M)
+    rbf_features = features.InducingPoints(Z_rbf)
+    print("z initialized")
+
+    layers = [
+            ConvLayer(
+                base_kernel=kernels.RBF(patch_length),
+                mean_function=conv_mean,
+                feature=conv_features,
+                input_size=(28, 28),
+                feature_maps=1,
+                filter_size=filter_size,
+                white=False),
+            SVGP_Layer(gpflow.kernels.RBF(h1_out, lengthscales=1, variance=1),
+                num_outputs=10,
+                feature=rbf_features,
+                mean_function=gpflow.mean_functions.Zero(output_dim=10),
+                white=False)
+    ]
+
+    return DGP_Base(X_train, Y_train,
+            likelihood=gpflow.likelihoods.MultiClass(10),
+            layers=layers,
+            minibatch_size=flags.batch_size)
 
 class MNIST(object):
     def __init__(self, flags):
@@ -70,39 +108,7 @@ class MNIST(object):
         Loop(self.optimizers, stop=numiter)()
 
     def _setup_model(self):
-        filter_size = 5
-        patch_length = filter_size**2
-        conv_features = PatchInducingFeature.from_images(self.X_train.reshape(-1, 28, 28), self.flags.M,
-                filter_size)
-        h1_out = 576
-        conv_mean = Conv2dMean(filter_size, 1)
-        conv_mean.set_trainable(False)
-
-        sess = conv_mean.enquire_session()
-        H1_X = sess.run(conv_mean(self.X_train.reshape(-1, 28, 28, 1)))
-        Z_rbf = select_initial_inducing_points(H1_X, self.flags.M)
-        rbf_features = features.InducingPoints(Z_rbf)
-
-        layers = [
-                ConvLayer(
-                    base_kernel=kernels.RBF(patch_length),
-                    mean_function=conv_mean,
-                    feature=conv_features,
-                    input_size=(28, 28),
-                    feature_maps=1,
-                    filter_size=filter_size,
-                    white=False),
-                SVGP_Layer(gpflow.kernels.RBF(h1_out, lengthscales=2, variance=2), num_outputs=10,
-                    feature=rbf_features,
-                    mean_function=gpflow.mean_functions.Zero(output_dim=10),
-                    white=False)
-        ]
-
-        self.model = DGP_Base(self.X_train, self.Y_train,
-                likelihood=gpflow.likelihoods.MultiClass(10),
-                layers=layers,
-                minibatch_size=self.flags.batch_size)
-        print("z initialized")
+        self.model = build_deep_model(self.flags, self.X_train, self.Y_train)
         self.model.compile()
 
     def _setup_optimizer(self):
