@@ -78,6 +78,7 @@ def build_deep_model(flags, X_train, Y_train):
 
     return DGP_Base(X_train, Y_train,
             likelihood=gpflow.likelihoods.MultiClass(10),
+            num_samples=flags.num_samples,
             layers=layers,
             minibatch_size=flags.batch_size)
 
@@ -212,6 +213,7 @@ def read_args():
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--test-size', type=int, default=10000)
     parser.add_argument('--random-inducing', action='store_true', default=False)
+    parser.add_argument('--num-samples', type=int, default=10)
     parser.add_argument('--log-dir', type=str, default='results',
             help="Directory to write the results to.")
     parser.add_argument('--lr', type=float, default=0.01)
