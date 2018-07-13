@@ -11,59 +11,16 @@ def _sample(tensor, count):
     chosen_indices = np.random.choice(np.arange(tensor.shape[0]), count)
     return tensor[chosen_indices]
 
-class PatchMixin(object):
-    def _extract_image_patches(self, NHWC_X):
-        # returns: N x H x W x C * P
-        return tf.extract_image_patches(NHWC_X,
-                [1, self.filter_size, self.filter_size, 1],
-                [1, self.stride, self.stride, 1],
-                [1, self.dilation, self.dilation, 1],
-                "VALID")
-
-    def extract_patches_PNL(self, NHWC_X):
-        NHWK_patches = self._extract_image_patches(NHWC_X)
-        KNHW_patches = tf.transpose(NHWK_patches, [3, 0, 1, 2])
-        # Currently only one filter map is supported. This should blow up
-        # if this is not the case.
-        N = tf.shape(NHWC_X)[0]
-        return tf.reshape(KNHW_patches, [self.patch_count, N, self.patch_length])
-
-    def extract_patches(self, NHWC_X):
-        """extract_patches
-
-        :param X: N x height x width x feature_maps
-        :returns N x patch_count * feature_maps x patch_length
-        """
-        # X: batch x height * width * feature_maps
-        NHWK_patches = self._extract_image_patches(NHWC_X)
-        N = tf.shape(NHWC_X)[0]
-        NKHW_patches = tf.transpose(NHWK_patches, [0, 3, 1, 2])
-        return tf.reshape(NKHW_patches, [N, self.patch_count * self.feature_maps, self.patch_length])
-
-    def _patch_length(self):
-        """The number of elements in a patch."""
-        return self.feature_maps * np.prod(self.patch_shape)
-
-    def _patch_count(self):
-        """The amount of patches in one image."""
-        return (self.input_size[0] - self.patch_shape[0] + 1) * (
-                self.input_size[1] - self.patch_shape[1] + 1) * self.feature_maps
-
-
-class ConvKernel(gpflow.kernels.Kernel, PatchMixin):
+class ConvKernel(gpflow.kernels.Kernel):
     # Loosely based on https://github.com/markvdw/convgp/blob/master/convgp/convkernels.py
-    def __init__(self, base_kernel, image_size, filter_size=5, stride=1, feature_maps=1):
+    def __init__(self, base_kernel, view):
         super().__init__(input_dim=filter_size*filter_size)
         self.base_kernel = base_kernel
-        self.image_size = image_size
-        self.filter_size = filter_size
-        self.stride = stride
-        self.dilation = 1
-        self.patch_size = (filter_size, filter_size)
-        self.feature_maps = feature_maps
+        self.view = view
         self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
-        self.patch_length = self._patch_length()
-        self.patch_count = self._patch_count()
+        self.patch_length = self.patch_length
+        self.patch_count = self.patch_count
+        self.image_size = self.view.input_size
 
     def _reshape_X(self, X):
         """
@@ -73,16 +30,16 @@ class ConvKernel(gpflow.kernels.Kernel, PatchMixin):
         :returns: Tensorflow tensor of size N x height x width x feature_maps
         """
         X_shape = tf.shape(X)
-        return tf.reshape(X, (X_shape[0], *self.image_size, self.feature_maps))
+        return tf.reshape(X, (X_shape[0], *self.image_size, self.view.feature_maps))
 
     def K(self, NHWC_X, X2=None):
         patch_length = self.patch_length
-        patches = tf.reshape(self.extract_patches(NHWC_X), [-1, patch_length])
+        patches = tf.reshape(self.view.extract_patches(NHWC_X), [-1, patch_length])
 
         if X2 is None:
             patches2 = patches
         else:
-            patches2 = tf.reshape(self.extract_patches(X2), [-1, patch_length])
+            patches2 = tf.reshape(self.view.extract_patches(X2), [-1, patch_length])
 
         # K: batch * patches x batch * patches
         K = self.base_kernel.K(patches, patches2)
@@ -101,7 +58,7 @@ class ConvKernel(gpflow.kernels.Kernel, PatchMixin):
     def Kdiag(self, NHWC_X):
         # Compute auto correlation in the patch space.
         # patches: N x patch_count x patch_length
-        patches = self.extract_patches(NHWC_X)
+        patches = self.view.extract_patches(NHWC_X)
         w = self.patch_weights
         W = w[None, :] * w[:, None]
         def sumK(p):
@@ -110,7 +67,7 @@ class ConvKernel(gpflow.kernels.Kernel, PatchMixin):
 
     def Kzx(self, Z, NHWC_X):
         # Patches: N x patch_count x patch_length
-        patches = self.extract_patches(NHWC_X)
+        patches = self.view.extract_patches(NHWC_X)
         patches = tf.reshape(patches, (-1, self.patch_length))
         # Kzx shape: M x N * patch_count
         Kzx = self.base_kernel.K(Z, patches)

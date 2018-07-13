@@ -4,20 +4,13 @@ import gpflow
 from gpflow import settings, features, conditionals, transforms
 from gpflow.kullback_leiblers import gauss_kl
 from doubly_stochastic_dgp.layers import Layer
-from kernels import PatchMixin, PatchInducingFeature
+from kernels import PatchInducingFeature
+from views import FullView
 
-class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
-    def __init__(self, base_kernel, input_size, filter_size, feature_maps):
-        gpflow.kernels.Kernel.__init__(self, input_dim=int(np.prod(input_size) * feature_maps))
+class MultiOutputConvKernel(gpflow.kernels.Kernel):
+    def __init__(self, base_kernel, input_dim):
+        super().__init__(input_dim=input_dim)
         self.base_kernel = base_kernel
-        self.input_size = input_size
-        self.filter_size = filter_size
-        self.stride = 1
-        self.dilation = 1
-        self.feature_maps = feature_maps
-        self.patch_shape = (filter_size, filter_size)
-        self.patch_count = self._patch_count()
-        self.patch_length = self._patch_length()
 
     def Kuu(self, ML_Z):
         M = tf.shape(ML_Z)[0]
@@ -32,7 +25,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
             # Returns covariance matrix of size M x N.
             return self.base_kernel.K(ML_Z, NL_patches)
 
-        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches, parallel_iterations=self.patch_count)
+        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches)
         return PMN_Kzx
 
     def Kff(self, PNL_patches):
@@ -42,7 +35,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
         def patch_auto_covariance(NL_patches):
             # Returns covariance matrix of size N x N.
             return self.base_kernel.K(NL_patches)
-        return tf.map_fn(patch_auto_covariance, PNL_patches, parallel_iterations=self.patch_count)
+        return tf.map_fn(patch_auto_covariance, PNL_patches)
 
     def Kdiag(self, PNL_patches):
         """
@@ -51,7 +44,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel, PatchMixin):
         def Kdiag(NL_patch):
             ":return: N diagonal of covariance matrix."
             return self.base_kernel.Kdiag(NL_patch)
-        return tf.map_fn(Kdiag, PNL_patches, parallel_iterations=self.patch_count)
+        return tf.map_fn(Kdiag, PNL_patches)
 
 class ConvLayer(Layer):
     def __init__(self, base_kernel, mean_function, feature=None,
@@ -62,20 +55,25 @@ class ConvLayer(Layer):
             **kwargs):
         super().__init__(**kwargs)
         self.base_kernel = base_kernel
-        self.input_size = input_size
-        self.feature_maps = feature_maps
 
-        self.conv_kernel = MultiOutputConvKernel(base_kernel, input_size, filter_size, feature_maps)
+        self.view = FullView(input_size=input_size,
+                filter_size=filter_size,
+                feature_maps=feature_maps)
 
-        self.patch_count = self.conv_kernel._patch_count()
-        self.patch_length = self.conv_kernel._patch_length()
+        self.feature_maps = self.view.feature_maps
+
+        self.conv_kernel = MultiOutputConvKernel(base_kernel,
+                np.prod(input_size) * feature_maps)
+
+        self.patch_count = self.view.patch_count
+        self.patch_length = self.view.patch_length
+        self.num_outputs = self.patch_count
 
         self.white = white
 
         self.feature = feature
 
         self.num_inducing = len(feature)
-        self.num_outputs = self.patch_count
 
         q_mu = np.zeros((self.num_inducing, 1), dtype=settings.float_type)
         self.q_mu = gpflow.Param(q_mu)
@@ -103,8 +101,8 @@ class ConvLayer(Layer):
         also compute entries outside the diagonal.
         """
         N = tf.shape(ND_X)[0]
-        NHWC_X = tf.reshape(ND_X, [N, self.input_size[0], self.input_size[1], self.feature_maps])
-        PNL_patches = self.conv_kernel.extract_patches_PNL(NHWC_X)
+        NHWC_X = tf.reshape(ND_X, [N, self.view.input_size[0], self.view.input_size[1], self.feature_maps])
+        PNL_patches = self.view.extract_patches_PNL(NHWC_X)
 
         MM_Kuu = self.conv_kernel.Kuu(self.feature.Z)
         PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
@@ -138,7 +136,6 @@ class ConvLayer(Layer):
             return gauss_kl(self.q_mu, self.q_sqrt, K=None)
         else:
             return gauss_kl(self.q_mu, self.q_sqrt, self.MM_Ku_prior)
-
 
     def _build_prior_cholesky(self):
         self.MM_Ku_prior = self.conv_kernel.Kuu(self.feature.Z.read_value())
