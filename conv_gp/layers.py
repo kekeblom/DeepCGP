@@ -49,20 +49,22 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
 class ConvLayer(Layer):
     def __init__(self, base_kernel, mean_function, feature=None, view=None,
             white=False,
+            gp_count=1,
             **kwargs):
         super().__init__(**kwargs)
         self.base_kernel = base_kernel
 
         self.view = view
 
-        self.feature_maps = self.view.feature_maps
+        self.feature_maps_in = self.view.feature_maps
+        self.gp_count = gp_count
 
         self.conv_kernel = MultiOutputConvKernel(base_kernel,
                 np.prod(view.input_size) * view.feature_maps)
 
         self.patch_count = self.view.patch_count
         self.patch_length = self.view.patch_length
-        self.num_outputs = self.patch_count
+        self.num_outputs = self.patch_count * gp_count
 
         self.white = white
 
@@ -70,16 +72,16 @@ class ConvLayer(Layer):
 
         self.num_inducing = len(feature)
 
-        q_mu = np.zeros((self.num_inducing, 1), dtype=settings.float_type)
+        q_mu = np.zeros((self.num_inducing, self.gp_count)).astype(settings.float_type)
         self.q_mu = gpflow.Param(q_mu)
 
         #TODO figure out if we need whitened vs non-whitened GP.
         if not self.white:
-            MM_q_sqrt = self._init_q_S()
+            GMM_q_sqrt = self._init_q_S()
         else:
-            MM_q_sqrt = np.eye(self.num_inducing, dtype=settings.float_type)
+            GMM_q_sqrt = np.tile(np.eye(self.num_inducing, dtype=settings.float_type)[None, :, :], [gp_count, 1, 1])
         q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing)
-        self.q_sqrt = gpflow.Param(MM_q_sqrt[None, :, :], transform=q_sqrt_transform)
+        self.q_sqrt = gpflow.Param(GMM_q_sqrt, transform=q_sqrt_transform)
 
         self.mean_function = mean_function
         self._build_prior_cholesky()
@@ -89,14 +91,14 @@ class ConvLayer(Layer):
         Returns the mean and the variance of q(f|m, S) = N(f| Am, K_nn + A(S - K_mm)A^T)
         where A = K_nm @ K_mm^{-1}
 
-        dimension O: num_outputs (== patch_count)
+        dimension O: num_outputs (== patch_count * gp_count)
 
         :param ON_X: The input X of shape O x N
         :param full_cov: if true, var is in (N, N, D_out) instead of (N, D_out) i.e. we
         also compute entries outside the diagonal.
         """
         N = tf.shape(ND_X)[0]
-        NHWC_X = tf.reshape(ND_X, [N, self.view.input_size[0], self.view.input_size[1], self.feature_maps])
+        NHWC_X = tf.reshape(ND_X, [N, self.view.input_size[0], self.view.input_size[1], self.feature_maps_in])
         PNL_patches = self.view.extract_patches_PNL(NHWC_X)
 
         MM_Kuu = self.conv_kernel.Kuu(self.feature.Z)
@@ -111,16 +113,23 @@ class ConvLayer(Layer):
             MN_Kuf, Knn = tupled
             return conditionals.base_conditional(MN_Kuf, MM_Kuu, Knn, self.q_mu, full_cov=full_cov, q_sqrt=self.q_sqrt, white=self.white)
 
-        PN_mean, PNN_var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
+        PNG_mean, var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
                 parallel_iterations=self.patch_count)
-        NP_mean = tf.transpose(PN_mean[:, :, 0], [1, 0])
+
+        NO_mean = tf.reshape(tf.transpose(PNG_mean, [1, 0, 2]), [N, self.gp_count * self.patch_count])
+
         if full_cov:
-            var = tf.transpose(PNN_var[:, 0, :, :], [2, 1, 0])
+            # var: P x G x N x N
+            ONN_var = tf.reshape(var, [self.patch_count * self.gp_count, N, N])
+            var = tf.transpose(ONN_var[:, :, :], [2, 1, 0])
         else:
-            var = tf.transpose(PNN_var[:, :, 0], [1, 0])
+            # var: P x N x G
+            var = tf.transpose(var, [1, 0, 2])
+            NO_var = tf.reshape(var, [N, self.patch_count * self.gp_count])
 
         mean_view = self.view.mean_view(NHWC_X, PNL_patches)
-        return NP_mean + self.mean_function(mean_view), var
+        mean = NO_mean + self.mean_function(mean_view)
+        return mean, var
 
     def KL(self):
         """
@@ -143,6 +152,6 @@ class ConvLayer(Layer):
         MM_Ku = self.conv_kernel.Kuu(self.feature.Z.read_value())
         MM_Lu = tf.linalg.cholesky(MM_Ku)
         MM_Lu = self.enquire_session().run(MM_Lu)
-        return MM_Lu
+        return np.tile(MM_Lu[None, :, :], [self.gp_count, 1, 1])
 
 

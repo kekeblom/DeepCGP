@@ -52,15 +52,16 @@ def build_model(flags, X_train, Y_train):
     Z_rbf = select_initial_inducing_points(H1_X, flags.M)
     rbf_features = features.InducingPoints(Z_rbf)
     print("z initialized")
+    conv_layer = ConvLayer(
+        base_kernel=kernels.RBF(patch_length),
+        mean_function=conv_mean,
+        feature=conv_features,
+        view=view,
+        white=False)
 
     layers = [
-            ConvLayer(
-                base_kernel=kernels.RBF(patch_length),
-                mean_function=conv_mean,
-                feature=conv_features,
-                view=view,
-                white=False),
-            SVGP_Layer(gpflow.kernels.RBF(view.patch_count, lengthscales=2, variance=2, ARD=True),
+            conv_layer,
+            SVGP_Layer(gpflow.kernels.RBF(conv_layer.num_outputs, lengthscales=2, variance=2, ARD=True),
                 num_outputs=10,
                 feature=rbf_features,
                 mean_function=gpflow.mean_functions.Zero(output_dim=10),
@@ -221,13 +222,14 @@ def read_args():
     parser.add_argument('--optimizer', type=str, default='Adam',
             help="Either Adam or NatGrad")
 
+    parser.add_argument('--conv-gps', type=int, default=1)
+
     partial_group = parser.add_argument_group('partial view', description='These options are only for using a subset of patches.')
     partial_group.add_argument('--partial-view', action='store_true')
     partial_group.add_argument('--patch-count', default=16, type=int)
 
     full_group = parser.add_argument_group('full view', 'When using the full view.')
     full_group.add_argument('--stride', default=1, type=int)
-
 
     return parser.parse_args()
 

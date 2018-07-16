@@ -4,6 +4,7 @@ import gpflow
 from gpflow import settings
 import math
 from doubly_stochastic_dgp.layers import SVGP_Layer
+from layers import ConvLayer
 from .log import LogBase
 
 class TensorBoardTask(object):
@@ -46,10 +47,14 @@ class LayerOutputLogger(TensorBoardTask):
 
         Fs, Fmeans, _ = model.propagate(self.input_image)
         side = int(np.sqrt(model.layers[0].view.patch_count))
-        mean_image = tf.reshape(Fmeans[0], [-1, side, side, 1])
-        sample_image = tf.reshape(Fs[0], [-1, side, side, 1])
+        conv_layer = [layer for layer in model.layers if isinstance(layer, ConvLayer)][0]
+        out_feature_maps = conv_layer.gp_count
 
-        input_sum = tf.summary.image("conv_input_image", tf.reshape(self.input_image, [-1, 28, 28, 1]))
+        mean_image = tf.transpose(Fmeans[0], [2, 0, 1])
+        mean_image = tf.reshape(mean_image, [out_feature_maps, side, side, 1])
+        sample_image = tf.reshape(tf.transpose(Fs[0], [2, 0, 1]), [out_feature_maps, side, side, 1])
+
+        input_sum = tf.summary.image("conv_input_image", tf.reshape(self.input_image, [out_feature_maps, 28, 28, 1]))
         sample_sum = tf.summary.image("conv_sample", sample_image)
         mean_sum = tf.summary.image("conv_mean", mean_image)
 
@@ -57,7 +62,7 @@ class LayerOutputLogger(TensorBoardTask):
 
     def __call__(self, model):
         X = model.X.value
-        samples = 3
+        samples = 1
         random_indices = np.random.randint(X.shape[0], size=samples)
         x = X[random_indices]
 
