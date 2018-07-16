@@ -16,15 +16,16 @@ class View(object):
 
 class FullView(View):
     """The full view uses all patches of the image."""
-    def __init__(self, input_size, filter_size, feature_maps):
+    def __init__(self, input_size, filter_size, feature_maps, stride=1):
         self.input_size = input_size
-        self.stride = 1
+        self.stride = stride
         self.dilation = 1
         self.filter_size = filter_size
         self.feature_maps = feature_maps
         self.patch_shape = (filter_size, filter_size)
         self.patch_count = self._patch_count()
         self.patch_length = self._patch_length()
+        self.out_image_height, self.out_image_width = self._out_image_size()
 
     def _extract_image_patches(self, NHWC_X):
         # returns: N x H x W x C * P
@@ -60,8 +61,13 @@ class FullView(View):
 
     def _patch_count(self):
         """The amount of patches in one image."""
-        return (self.input_size[0] - self.patch_shape[0] + 1) * (
-                self.input_size[1] - self.patch_shape[1] + 1) * self.feature_maps
+        height, width = self._out_image_size()
+        return height * width * self.feature_maps
+
+    def _out_image_size(self):
+        height = (self.input_size[0] - self.patch_shape[0]) // self.stride + 1
+        width = (self.input_size[1] - self.patch_shape[1]) // self.stride + 1
+        return height, width
 
 class RandomPartialView(View):
     def __init__(self, input_size, filter_size, feature_maps,

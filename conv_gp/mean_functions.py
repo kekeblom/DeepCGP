@@ -4,15 +4,18 @@ import tensorflow as tf
 from gpflow.decors import params_as_tensors
 
 class Conv2dMean(gpflow.mean_functions.MeanFunction):
-    def __init__(self, filter_size, feature_maps):
+    def __init__(self, filter_size, feature_maps, stride=1):
         super().__init__()
         self.filter_size = filter_size
         self.feature_maps = feature_maps
+        self.stride = stride
         self.conv_filter = gpflow.Param(self._init_filter())
 
     @params_as_tensors
     def __call__(self, NHWC_X):
-        convolved = tf.nn.conv2d(NHWC_X, self.conv_filter, [1, 1, 1, 1], "VALID",
+        convolved = tf.nn.conv2d(NHWC_X, self.conv_filter,
+                strides=[1, self.stride, self.stride, 1],
+                padding="VALID",
                 data_format="NHWC")
         NHWC = tf.shape(NHWC_X)
         return tf.reshape(convolved, [NHWC[0], -1])

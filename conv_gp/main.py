@@ -35,8 +35,10 @@ def build_model(flags, X_train, Y_train):
         sess = conv_mean.enquire_session()
         H1_X = sess.run(conv_mean(view.extract_patches_PNL(NHWC_X_train)))
     else:
-        view = FullView(input_size=(28, 28), filter_size=5, feature_maps=1)
-        conv_mean = Conv2dMean(filter_size, 1)
+        view = FullView(input_size=(28, 28), filter_size=5,
+                feature_maps=1,
+                stride=flags.stride)
+        conv_mean = Conv2dMean(filter_size, 1, stride=flags.stride)
         sess = conv_mean.enquire_session()
         H1_X = sess.run(conv_mean(NHWC_X_train))
 
@@ -45,7 +47,6 @@ def build_model(flags, X_train, Y_train):
     else:
         conv_features = PatchInducingFeature.from_images(X_train.reshape(-1, 28, 28), flags.M,
             filter_size)
-    h1_out = view.patch_count
     conv_mean.set_trainable(False)
 
     Z_rbf = select_initial_inducing_points(H1_X, flags.M)
@@ -59,7 +60,7 @@ def build_model(flags, X_train, Y_train):
                 feature=conv_features,
                 view=view,
                 white=False),
-            SVGP_Layer(gpflow.kernels.RBF(h1_out, lengthscales=1, variance=1),
+            SVGP_Layer(gpflow.kernels.RBF(view.patch_count, lengthscales=2, variance=2, ARD=True),
                 num_outputs=10,
                 feature=rbf_features,
                 mean_function=gpflow.mean_functions.Zero(output_dim=10),
@@ -182,8 +183,10 @@ class MNIST(object):
         sample_task = utils.LayerOutputLogger(self.model)
         model_parameter_task = utils.ModelParameterLogger(self.model)
         likelihood = utils.LogLikelihoodLogger()
+        patch_covariance = utils.PatchCovarianceLogger(self.model)
 
-        tasks = [sample_task, model_parameter_task, likelihood]
+        tasks = [sample_task, model_parameter_task, likelihood,
+                patch_covariance]
         self.tensorboard_log = utils.TensorBoardLog(tasks, self.flags.tensorboard_dir, self.flags.name,
                 self.model, self.global_step)
 
@@ -218,9 +221,14 @@ def read_args():
     parser.add_argument('--optimizer', type=str, default='Adam',
             help="Either Adam or NatGrad")
 
-    group = parser.add_argument_group('partial view', description='These options are only for using a subset of patches.')
-    group.add_argument('--partial-view', action='store_true')
-    group.add_argument('--patch-count', default=16, type=int)
+    partial_group = parser.add_argument_group('partial view', description='These options are only for using a subset of patches.')
+    partial_group.add_argument('--partial-view', action='store_true')
+    partial_group.add_argument('--patch-count', default=16, type=int)
+
+    full_group = parser.add_argument_group('full view', 'When using the full view.')
+    full_group.add_argument('--stride', default=1, type=int)
+
+
     return parser.parse_args()
 
 def train_steps(flags):
