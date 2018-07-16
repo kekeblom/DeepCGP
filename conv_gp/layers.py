@@ -47,23 +47,18 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
         return tf.map_fn(Kdiag, PNL_patches)
 
 class ConvLayer(Layer):
-    def __init__(self, base_kernel, mean_function, feature=None,
-            input_size=None,
-            feature_maps=None,
-            filter_size=None,
+    def __init__(self, base_kernel, mean_function, feature=None, view=None,
             white=False,
             **kwargs):
         super().__init__(**kwargs)
         self.base_kernel = base_kernel
 
-        self.view = FullView(input_size=input_size,
-                filter_size=filter_size,
-                feature_maps=feature_maps)
+        self.view = view
 
         self.feature_maps = self.view.feature_maps
 
         self.conv_kernel = MultiOutputConvKernel(base_kernel,
-                np.prod(input_size) * feature_maps)
+                np.prod(view.input_size) * view.feature_maps)
 
         self.patch_count = self.view.patch_count
         self.patch_length = self.view.patch_length
@@ -123,7 +118,9 @@ class ConvLayer(Layer):
             var = tf.transpose(PNN_var[:, 0, :, :], [2, 1, 0])
         else:
             var = tf.transpose(PNN_var[:, :, 0], [1, 0])
-        return NP_mean + self.mean_function(NHWC_X), var
+
+        mean_view = self.view.mean_view(NHWC_X, PNL_patches)
+        return NP_mean + self.mean_function(mean_view), var
 
     def KL(self):
         """

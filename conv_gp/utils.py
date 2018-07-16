@@ -107,20 +107,28 @@ class LayerOutputLogger(TensorBoardTask):
         self.summary = self._build_summary(model)
 
     def _build_summary(self, model):
-        X = model.X.parameter_tensor
-        samples = 10
-        random_indices = tf.random_uniform([10], 0, tf.shape(X)[0], dtype=tf.int32)
-        x = tf.gather(X, random_indices, axis=0)
+        self.input_image = tf.placeholder(settings.float_type, shape=[None, 784])
 
-        input_image = tf.reshape(x, [samples, 28, 28, 1])
-        input_sum = tf.summary.image("conv_input_image", input_image)
+        Fs, Fmeans, _ = model.propagate(self.input_image)
+        side = int(np.sqrt(model.layers[0].view.patch_count))
+        mean_image = tf.reshape(Fmeans[0], [-1, side, side, 1])
+        sample_image = tf.reshape(Fs[0], [-1, side, side, 1])
 
-        Fs, Fmeans, _ = model.propagate(x)
-        sample_image = tf.reshape(Fs[0], [samples, 24, 24, 1])
+        input_sum = tf.summary.image("conv_input_image", tf.reshape(self.input_image, [-1, 28, 28, 1]))
         sample_sum = tf.summary.image("conv_sample", sample_image)
-        mean_image = tf.reshape(Fmeans[0], [samples, 24, 24, 1])
         mean_sum = tf.summary.image("conv_mean", mean_image)
+
         return tf.summary.merge([input_sum, sample_sum, mean_sum])
+
+    def __call__(self, model):
+        X = model.X.value
+        samples = 3
+        random_indices = np.random.randint(X.shape[0], size=samples)
+        x = X[random_indices]
+
+        return model.enquire_session().run(self.summary, {
+            self.input_image: x
+        })
 
 class ModelParameterLogger(TensorBoardTask):
     def __init__(self, model):

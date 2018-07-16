@@ -10,6 +10,10 @@ class View(object):
     def _extract_patches_PNL(self, *args):
         raise NotImplementedError()
 
+    def mean_view(self, NHWC_X, PNL_patches):
+        """Returns a N x H x W x C shaped tensor. The view of the data passed to the mean function."""
+        return NHWC_X
+
 class FullView(View):
     """The full view uses all patches of the image."""
     def __init__(self, input_size, filter_size, feature_maps):
@@ -71,6 +75,7 @@ class RandomPartialView(View):
         self.patch_count = patch_count
         self.patch_length = self._patch_length()
         self.patch_indices = self._select_patches()
+        self.out_image_height, self.out_image_width = self._out_image_size()
 
     def _select_patches(self):
         ys = np.arange(0, self.input_size[0] - self.filter_size)
@@ -83,6 +88,7 @@ class RandomPartialView(View):
             if (y, x) in taken:
                 continue
             else:
+                taken[(y, x)] = True
                 y = slice(y, y + self.filter_size)
                 x = slice(x, x + self.filter_size)
                 patches.append([y, x])
@@ -102,6 +108,15 @@ class RandomPartialView(View):
         PNL_stacked = tf.stack(tensors)
         return PNL_stacked
 
+    def mean_view(self, _, PNL_patches):
+        return PNL_patches
+
     def _patch_length(self):
         return np.prod(self.patch_shape) * self.feature_maps
+
+    def _out_image_size(self):
+        side = int(np.sqrt(self.patch_count))
+        return (side, side)
+
+
 
