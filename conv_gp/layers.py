@@ -80,7 +80,7 @@ class ConvLayer(Layer):
             GMM_q_sqrt = self._init_q_S()
         else:
             GMM_q_sqrt = np.tile(np.eye(self.num_inducing, dtype=settings.float_type)[None, :, :], [gp_count, 1, 1])
-        q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing)
+        q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing, num_matrices=self.gp_count)
         self.q_sqrt = gpflow.Param(GMM_q_sqrt, transform=q_sqrt_transform)
 
         self.mean_function = mean_function

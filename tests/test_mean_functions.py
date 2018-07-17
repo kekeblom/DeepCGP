@@ -38,4 +38,11 @@ class TestMeanFunction(TestCase):
         conv_mean_patches = sess.run(conv_mean(images))
         self.assertEqual(conv_mean_patches.shape, mean_patches.shape)
 
+    def test_feature_maps(self):
+        full_conv = Conv2dMean(3, 1, 3)
+        random_input = np.random.randn(4, 28, 28, 1)
+        sess = full_conv.enquire_session()
+        convolved = sess.run(full_conv(random_input))
+        self.assertEqual(convolved.shape, (4, 676*3))
+
 

@@ -38,7 +38,7 @@ def build_model(flags, X_train, Y_train):
         view = FullView(input_size=(28, 28), filter_size=5,
                 feature_maps=1,
                 stride=flags.stride)
-        conv_mean = Conv2dMean(filter_size, 1, stride=flags.stride)
+        conv_mean = Conv2dMean(filter_size, 1, feature_maps_out=flags.conv_gps, stride=flags.stride)
         sess = conv_mean.enquire_session()
         H1_X = sess.run(conv_mean(NHWC_X_train))
 
@@ -57,7 +57,8 @@ def build_model(flags, X_train, Y_train):
         mean_function=conv_mean,
         feature=conv_features,
         view=view,
-        white=False)
+        white=False,
+        gp_count=flags.conv_gps)
 
     layers = [
             conv_layer,
@@ -212,7 +213,7 @@ def read_args():
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--test-size', type=int, default=10000)
     parser.add_argument('--random-inducing', action='store_true', default=False)
-    parser.add_argument('--num-samples', type=int, default=10)
+    parser.add_argument('--num-samples', type=int, default=1)
     parser.add_argument('--log-dir', type=str, default='results',
             help="Directory to write the results to.")
     parser.add_argument('--lr', type=float, default=0.01)
