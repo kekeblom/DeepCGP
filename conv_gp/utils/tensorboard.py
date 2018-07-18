@@ -5,6 +5,8 @@ import gpflow
 from gpflow import settings
 import math
 from doubly_stochastic_dgp.layers import SVGP_Layer
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot
 from layers import ConvLayer
 from .log import LogBase
@@ -78,6 +80,8 @@ class LayerOutputLogger(TensorBoardTask):
         sample_image, mean_image, variance_image = sess.run([
             sample_image, mean_image, variance_image])
 
+        pyplot.close('all')
+
         return sess.run(self.summary, {
             self.tf_sample_image: sample_image,
             self.tf_mean_image: mean_image,
@@ -87,7 +91,7 @@ class LayerOutputLogger(TensorBoardTask):
     def _plot_samples(self, samples, conv_layer):
         sample_count = len(samples)
         feature_maps = conv_layer.gp_count
-        sample_figure = pyplot.figure(figsize=(sample_count * 5, feature_maps * 5))
+        sample_figure = pyplot.figure(figsize=(feature_maps * 5, sample_count * 5))
         height_width = int(np.sqrt(samples.shape[1] / feature_maps))
         samples = samples.reshape(sample_count, height_width, height_width, feature_maps)
         samples = np.transpose(samples, [0, 3, 1, 2])
@@ -118,7 +122,7 @@ class LayerOutputLogger(TensorBoardTask):
 
     def _plot_variance(self, Fvars, conv_layer):
         feature_maps = conv_layer.gp_count
-        variance_figure = pyplot.figure(figsize=(10, 10))
+        variance_figure = pyplot.figure(figsize=(10 * feature_maps, 10))
         image = Fvars[0]
         height = int(np.sqrt(image.size / feature_maps))
         image = image.reshape(height, height, feature_maps)

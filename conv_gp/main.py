@@ -19,55 +19,77 @@ def select_initial_inducing_points(X, M):
     kmeans.fit(X)
     return kmeans.cluster_centers_
 
-def build_model(flags, X_train, Y_train):
-    filter_size = 5
-    patch_length = filter_size**2
+def parse_ints(int_string):
+    return [int(i) for i in int_string.split(',')]
 
-    NHWC_X_train = X_train.reshape(-1, 28, 28, 1)
+def image_HW(patch_count):
+    image_height = int(np.sqrt(patch_count))
+    return [image_height, image_height]
 
-    if flags.partial_view:
-        view = RandomPartialView(input_size=(28, 28),
-                filter_size=filter_size,
-                feature_maps=1,
-                patch_count=flags.patch_count)
-        conv_mean = PatchwiseConv2d(filter_size, 1, view.out_image_height,
-                view.out_image_width)
-        sess = conv_mean.enquire_session()
-        H1_X = sess.run(conv_mean(view.extract_patches_PNL(NHWC_X_train)))
-    else:
-        view = FullView(input_size=(28, 28), filter_size=5,
-                feature_maps=1,
-                stride=flags.stride)
-        conv_mean = Conv2dMean(filter_size, 1, feature_maps_out=flags.conv_gps, stride=flags.stride)
-        sess = conv_mean.enquire_session()
-        H1_X = sess.run(conv_mean(NHWC_X_train))
+def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
+    NHWC = NHWC_X.shape
+    view = FullView(input_size=NHWC[1:3],
+            filter_size=filter_size,
+            feature_maps=NHWC[3],
+            stride=stride)
 
+    conv_mean = Conv2dMean(filter_size, NHWC[3],
+            feature_maps_out=feature_map,
+            stride=stride)
+
+    output_shape = image_HW(view.patch_count) + [feature_map]
+
+    sess = conv_mean.enquire_session()
+    H_X = sess.run(conv_mean(NHWC_X))
     if flags.random_inducing:
-        conv_features = PatchInducingFeature(np.random.randn(flags.M, patch_length))
+        conv_features = PatchInducingFeature(np.random.randn(flags.M, filter_size*2))
     else:
-        conv_features = PatchInducingFeature.from_images(X_train.reshape(-1, 28, 28), flags.M,
-            filter_size)
+        conv_features = PatchInducingFeature.from_images(
+                NHWC_X,
+                flags.M,
+                filter_size)
     conv_mean.set_trainable(False)
 
-    Z_rbf = select_initial_inducing_points(H1_X, flags.M)
-    rbf_features = features.InducingPoints(Z_rbf)
-    print("z initialized")
     conv_layer = ConvLayer(
-        base_kernel=kernels.RBF(patch_length),
+        base_kernel=kernels.RBF(filter_size**2, lengthscales=2, variance=2),
         mean_function=conv_mean,
         feature=conv_features,
         view=view,
         white=False,
-        gp_count=flags.conv_gps)
+        gp_count=feature_map)
 
-    layers = [
-            conv_layer,
-            SVGP_Layer(gpflow.kernels.RBF(conv_layer.num_outputs, lengthscales=2, variance=2, ARD=True),
+    # Start with low variance.
+    conv_layer.q_sqrt = conv_layer.q_sqrt.value * 1e-5
+
+    return conv_layer, H_X
+
+def build_conv_layers(flags, NHWC_X_train):
+    feature_maps = parse_ints(flags.feature_maps)
+    filter_sizes = parse_ints(flags.feature_maps)
+    strides = parse_ints(flags.strides)
+    H_X = NHWC_X_train
+    layers = []
+    for (feature_map, filter_size, stride) in zip(feature_maps, filter_sizes, strides):
+        conv_layer, H_X = build_conv_layer(flags, H_X, feature_map, filter_size, stride)
+        layers.append(conv_layer)
+    return layers, H_X
+
+def build_model(flags, X_train, Y_train):
+    NHWC_X_train = X_train.reshape(-1, 28, 28, 1)
+
+    conv_layers, H_X = build_conv_layers(flags, NHWC_X_train)
+    H_X = H_X.reshape(H_X.shape[0], -1)
+
+    Z_rbf = select_initial_inducing_points(H_X, flags.M)
+    rbf_features = features.InducingPoints(Z_rbf)
+    conv_output_count = conv_layers[-1].num_outputs
+    layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count, lengthscales=2, variance=2, ARD=True),
                 num_outputs=10,
                 feature=rbf_features,
                 mean_function=gpflow.mean_functions.Zero(output_dim=10),
-                white=False)
-    ]
+                white=False)]
+
+    layers[-1].q_sqrt = layers[-1].q_sqrt.value * 1e-5
 
     return DGP_Base(X_train, Y_train,
             likelihood=gpflow.likelihoods.MultiClass(10),
@@ -115,14 +137,13 @@ class MNIST(object):
 
         self.optimizers = []
         if self.flags.optimizer == "NatGrad":
-            variational_parameters = [[self.model.layers[0].q_mu, self.model.layers[0].q_sqrt],
-                    [self.model.layers[1].q_mu, self.model.layers[1].q_sqrt]]
+            variational_parameters = [(self.model.layers[-1].q_mu, self.model.layers[-1].q_sqrt)]
 
             for params in variational_parameters:
                 for param in params:
                     param.set_trainable(False)
 
-            nat_grad = gpflow.train.NatGradOptimizer(gamma=0.1).make_optimize_action(self.model,
+            nat_grad = gpflow.train.NatGradOptimizer(gamma=self.flags.gamma).make_optimize_action(self.model,
                     var_list=variational_parameters)
             self.optimizers.append(nat_grad)
 
@@ -213,7 +234,7 @@ def read_args():
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--test-size', type=int, default=10000)
     parser.add_argument('--random-inducing', action='store_true', default=False)
-    parser.add_argument('--num-samples', type=int, default=1)
+    parser.add_argument('--num-samples', type=int, default=10)
     parser.add_argument('--log-dir', type=str, default='results',
             help="Directory to write the results to.")
     parser.add_argument('--lr', type=float, default=0.01)
@@ -223,14 +244,12 @@ def read_args():
     parser.add_argument('--optimizer', type=str, default='Adam',
             help="Either Adam or NatGrad")
 
-    parser.add_argument('--conv-gps', type=int, default=1)
+    parser.add_argument('--feature-maps', type=str, default='1')
+    parser.add_argument('--filter-sizes', type=str, default='5')
+    parser.add_argument('--strides', type=str, default='1')
 
-    partial_group = parser.add_argument_group('partial view', description='These options are only for using a subset of patches.')
-    partial_group.add_argument('--partial-view', action='store_true')
-    partial_group.add_argument('--patch-count', default=16, type=int)
-
-    full_group = parser.add_argument_group('full view', 'When using the full view.')
-    full_group.add_argument('--stride', default=1, type=int)
+    parser.add_argument('--gamma', type=float, default=1.0,
+            help="Gamma parameter to start with for natgrad.")
 
     return parser.parse_args()
 
