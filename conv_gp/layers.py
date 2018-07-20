@@ -1,16 +1,18 @@
 import numpy as np
 import tensorflow as tf
 import gpflow
-from gpflow import settings, features, conditionals, transforms
+from gpflow import settings, features, transforms
 from gpflow.kullback_leiblers import gauss_kl
 from doubly_stochastic_dgp.layers import Layer
 from kernels import PatchInducingFeature
+from conditionals import base_conditional
 from views import FullView
 
 class MultiOutputConvKernel(gpflow.kernels.Kernel):
-    def __init__(self, base_kernel, input_dim):
+    def __init__(self, base_kernel, input_dim, patch_count):
         super().__init__(input_dim=input_dim)
         self.base_kernel = base_kernel
+        self.patch_count = patch_count
 
     def Kuu(self, ML_Z):
         M = tf.shape(ML_Z)[0]
@@ -25,7 +27,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
             # Returns covariance matrix of size M x N.
             return self.base_kernel.K(ML_Z, NL_patches)
 
-        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches)
+        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches, parallel_iterations=self.patch_count)
         return PMN_Kzx
 
     def Kff(self, PNL_patches):
@@ -35,7 +37,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
         def patch_auto_covariance(NL_patches):
             # Returns covariance matrix of size N x N.
             return self.base_kernel.K(NL_patches)
-        return tf.map_fn(patch_auto_covariance, PNL_patches)
+        return tf.map_fn(patch_auto_covariance, PNL_patches, parallel_iterations=self.patch_count)
 
     def Kdiag(self, PNL_patches):
         """
@@ -44,7 +46,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
         def Kdiag(NL_patch):
             ":return: N diagonal of covariance matrix."
             return self.base_kernel.Kdiag(NL_patch)
-        return tf.map_fn(Kdiag, PNL_patches)
+        return tf.map_fn(Kdiag, PNL_patches, parallel_iterations=self.patch_count)
 
 class ConvLayer(Layer):
     def __init__(self, base_kernel, mean_function, feature=None, view=None,
@@ -59,12 +61,13 @@ class ConvLayer(Layer):
         self.feature_maps_in = self.view.feature_maps
         self.gp_count = gp_count
 
-        self.conv_kernel = MultiOutputConvKernel(base_kernel,
-                np.prod(view.input_size) * view.feature_maps)
-
         self.patch_count = self.view.patch_count
         self.patch_length = self.view.patch_length
         self.num_outputs = self.patch_count * gp_count
+
+        self.conv_kernel = MultiOutputConvKernel(base_kernel,
+                np.prod(view.input_size) * view.feature_maps, patch_count=self.patch_count)
+
 
         self.white = white
 
@@ -109,9 +112,11 @@ class ConvLayer(Layer):
         else:
             P_Knn = self.conv_kernel.Kdiag(PNL_patches)
 
+        Lm = tf.cholesky(MM_Kuu)
+
         def conditional(tupled):
             MN_Kuf, Knn = tupled
-            return conditionals.base_conditional(MN_Kuf, MM_Kuu, Knn, self.q_mu, full_cov=full_cov, q_sqrt=self.q_sqrt, white=self.white)
+            return base_conditional(MN_Kuf, Lm, Knn, self.q_mu, full_cov=full_cov, q_sqrt=self.q_sqrt, white=self.white)
 
         PNG_mean, var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
                 parallel_iterations=self.patch_count)

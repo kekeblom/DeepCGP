@@ -40,7 +40,10 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
     output_shape = image_HW(view.patch_count) + [feature_map]
 
     sess = conv_mean.enquire_session()
-    H_X = sess.run(conv_mean(NHWC_X))
+    H_X = sess.run(conv_mean(NHWC_X)).reshape(-1,
+            view.out_image_width,
+            view.out_image_height,
+            feature_map)
     if flags.random_inducing:
         conv_features = PatchInducingFeature(np.random.randn(flags.M, filter_size*2))
     else:
@@ -65,7 +68,7 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
 
 def build_conv_layers(flags, NHWC_X_train):
     feature_maps = parse_ints(flags.feature_maps)
-    filter_sizes = parse_ints(flags.feature_maps)
+    filter_sizes = parse_ints(flags.filter_sizes)
     strides = parse_ints(flags.strides)
     H_X = NHWC_X_train
     layers = []
@@ -112,6 +115,7 @@ class MNIST(object):
     def train_step(self):
         self._optimize()
         self._log_step()
+        self._checkpoint_model()
 
     def _log_step(self):
         entry = self.log.write_entry(self.model)
@@ -121,6 +125,11 @@ class MNIST(object):
     def _optimize(self):
         numiter = self.flags.test_every
         Loop(self.optimizers, stop=numiter)()
+
+    def _checkpoint_model(self):
+        saver = tf.train.Saver()
+        model_session = self.model.enquire_session()
+        saver.save(model_session, self.flags.model_path)
 
     def _setup_model(self):
         self.model = build_model(self.flags, self.X_train, self.Y_train)
@@ -203,7 +212,7 @@ class MNIST(object):
         self.log.write_flags(self.flags)
 
     def _init_tensorboard(self):
-        sample_task = utils.LayerOutputLogger(self.model)
+        sample_task = utils.LayerOutputLogger(self.model, self.X_test)
         model_parameter_task = utils.ModelParameterLogger(self.model)
         likelihood = utils.LogLikelihoodLogger()
         patch_covariance = utils.PatchCovarianceLogger(self.model)
@@ -243,6 +252,7 @@ def read_args():
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/mnist/tensorboard')
     parser.add_argument('--optimizer', type=str, default='Adam',
             help="Either Adam or NatGrad")
+    parser.add_argument('--model-path', default='/tmp/mnist/model.ckpt')
 
     parser.add_argument('--feature-maps', type=str, default='1')
     parser.add_argument('--filter-sizes', type=str, default='5')

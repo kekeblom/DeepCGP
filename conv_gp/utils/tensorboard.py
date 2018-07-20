@@ -5,9 +5,6 @@ import gpflow
 from gpflow import settings
 import math
 from doubly_stochastic_dgp.layers import SVGP_Layer
-import matplotlib
-matplotlib.use('Agg')
-from matplotlib import pyplot
 from layers import ConvLayer
 from .log import LogBase
 
@@ -43,9 +40,14 @@ class LogLikelihoodLogger(TensorBoardTask):
         })
 
 class LayerOutputLogger(TensorBoardTask):
-    def __init__(self, model):
+    def __init__(self, model, X_test):
+        self.X_test = X_test
         self.input_image = tf.placeholder(settings.float_type, shape=[None, None])
         self.summary = self._build_summary()
+        import matplotlib
+        matplotlib.use('Agg')
+        from matplotlib import pyplot
+        self.plt = pyplot
 
     def _build_summary(self):
         self.tf_sample_image = tf.placeholder(settings.float_type, shape=[None] * 4)
@@ -59,8 +61,7 @@ class LayerOutputLogger(TensorBoardTask):
         return tf.summary.merge(summaries)
 
     def __call__(self, model):
-        X = model.X.value
-        chosen = np.random.choice(np.arange(len(X)), size=1)
+        chosen = np.random.choice(np.arange(len(self.X_test)), size=1)
 
         conv_layer = model.layers[0]
 
@@ -70,7 +71,7 @@ class LayerOutputLogger(TensorBoardTask):
             samples, Fmeans, Fvars = conv_layer.sample_from_conditional(
                     tf.tile(self.input_image[None], [4, 1, 1]), full_cov=False)
             samples, Fmeans, Fvars = sess.run([samples, Fmeans, Fvars], {
-                self.input_image: X[chosen]
+                self.input_image: self.X_test[chosen]
                 })
 
         sample_image = self._plot_samples(samples[:, 0, :], conv_layer)
@@ -80,7 +81,7 @@ class LayerOutputLogger(TensorBoardTask):
         sample_image, mean_image, variance_image = sess.run([
             sample_image, mean_image, variance_image])
 
-        pyplot.close('all')
+        self.plt.close('all')
 
         return sess.run(self.summary, {
             self.tf_sample_image: sample_image,
@@ -91,47 +92,47 @@ class LayerOutputLogger(TensorBoardTask):
     def _plot_samples(self, samples, conv_layer):
         sample_count = len(samples)
         feature_maps = conv_layer.gp_count
-        sample_figure = pyplot.figure(figsize=(feature_maps * 5, sample_count * 5))
+        sample_figure = self.plt.figure(figsize=(feature_maps * 5, sample_count * 5))
         height_width = int(np.sqrt(samples.shape[1] / feature_maps))
         samples = samples.reshape(sample_count, height_width, height_width, feature_maps)
         samples = np.transpose(samples, [0, 3, 1, 2])
 
         for sample in range(sample_count):
             for feature_map in range(feature_maps):
-                axis = pyplot.subplot2grid((sample_count, feature_maps), loc=(sample, feature_map))
+                axis = self.plt.subplot2grid((sample_count, feature_maps), loc=(sample, feature_map))
                 axis.set_title("F sample {} feature map {}".format(sample, feature_map))
                 image = samples[sample, feature_map, :, :]
-                axis.imshow(image)
-        sample_figure.tight_layout()
+                img = axis.imshow(image, vmin=0, vmax=1.0)
+        sample_figure.colorbar(img, ax=sample_figure.axes)
         return self._figure_to_tensor(sample_figure)
 
     def _plot_mean(self, Fmeans, conv_layer):
         feature_maps = conv_layer.gp_count
-        mean_figure = pyplot.figure(figsize=(10 * feature_maps, 10))
+        mean_figure = self.plt.figure(figsize=(10 * feature_maps, 10))
         image = Fmeans[0]
         height = int(np.sqrt(image.size / feature_maps))
         image = image.reshape(height, height, feature_maps)
         image = np.transpose(image, [2, 0, 1])
         for i in range(feature_maps):
-            axis = pyplot.subplot2grid((1, feature_maps), loc=(0, i))
+            axis = self.plt.subplot2grid((1, feature_maps), loc=(0, i))
             axis.set_title("Mean fm {}".format(i))
-            axis.imshow(image[i])
+            img = axis.imshow(image[i], vmin=0, vmax=1)
 
-        mean_figure.tight_layout()
+        mean_figure.colorbar(img, ax=mean_figure.axes)
         return self._figure_to_tensor(mean_figure)
 
     def _plot_variance(self, Fvars, conv_layer):
         feature_maps = conv_layer.gp_count
-        variance_figure = pyplot.figure(figsize=(10 * feature_maps, 10))
+        variance_figure = self.plt.figure(figsize=(10 * feature_maps, 10))
         image = Fvars[0]
         height = int(np.sqrt(image.size / feature_maps))
         image = image.reshape(height, height, feature_maps)
         image = np.transpose(image, [2, 0, 1])
         for i in range(feature_maps):
-            axis = pyplot.subplot2grid((1, feature_maps), loc=(0, i))
-            axis.imshow(image[i])
+            axis = self.plt.subplot2grid((1, feature_maps), loc=(0, i))
+            img = axis.imshow(image[i], vmin=0, vmax=1)
             axis.set_title("Variance fm {}".format(i))
-        variance_figure.tight_layout()
+        variance_figure.colorbar(img, ax=variance_figure.axes)
         return self._figure_to_tensor(variance_figure)
 
     def _figure_to_tensor(self, figure):
@@ -148,28 +149,28 @@ class ModelParameterLogger(TensorBoardTask):
 
     def _build_summary(self, model):
         # Variational distribution parameters.
-        q_mu = model.layers[0].q_mu.parameter_tensor
-        q_sqrt = model.layers[0].q_sqrt.parameter_tensor
+        q_mu = model.layers[0].q_mu.value
+        q_sqrt = model.layers[0].q_sqrt.value
         q_mu_sum = tf.summary.histogram('q_mu', q_mu)
         q_sqrt_sum = tf.summary.histogram('q_sqrt', q_sqrt)
 
         # Inducing points.
         conv_layer = model.layers[0]
-        Z = conv_layer.feature.Z.parameter_tensor
+        Z = conv_layer.feature.Z.value
         Z_shape = tf.shape(Z)
         Z_sum = tf.summary.histogram('Z', Z)
 
-        variance = conv_layer.base_kernel.variance.parameter_tensor
-        length_scale = conv_layer.base_kernel.lengthscales.parameter_tensor
+        variance = conv_layer.base_kernel.variance.value
+        length_scale = conv_layer.base_kernel.lengthscales.value
 
         var_sum = tf.summary.scalar('base_kernel_var', variance)
         ls_sum = tf.summary.histogram('base_kernel_length_scale', length_scale)
 
         rbf_layer = [layer for layer in model.layers if isinstance(layer, SVGP_Layer)][0]
         rbf_var_sum = tf.summary.histogram('rbf_var',
-                rbf_layer.kern.variance.parameter_tensor)
+                rbf_layer.kern.variance.value)
         rbf_ls_sum = tf.summary.histogram('rbf_lengthscale',
-                rbf_layer.kern.lengthscales.parameter_tensor)
+                rbf_layer.kern.lengthscales.value)
 
         return tf.summary.merge([
             q_mu_sum,
