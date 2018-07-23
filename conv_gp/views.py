@@ -62,7 +62,7 @@ class FullView(View):
     def _patch_count(self):
         """The amount of patches in one image."""
         height, width = self._out_image_size()
-        return height * width * self.feature_maps
+        return height * width
 
     def _out_image_size(self):
         height = (self.input_size[0] - self.patch_shape[0]) // self.stride + 1

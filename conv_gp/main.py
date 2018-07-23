@@ -10,8 +10,8 @@ from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import SVGP_Layer
 from kernels import ConvKernel, PatchInducingFeature
 from layers import ConvLayer
-from mean_functions import Conv2dMean, PatchwiseConv2d
 from views import FullView, RandomPartialView
+from mean_functions import Conv2dMean
 from gpflow.actions import Loop
 
 def select_initial_inducing_points(X, M):
@@ -33,9 +33,7 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
             feature_maps=NHWC[3],
             stride=stride)
 
-    conv_mean = Conv2dMean(filter_size, NHWC[3],
-            feature_maps_out=feature_map,
-            stride=stride)
+    conv_mean = Conv2dMean(filter_size, NHWC[3], feature_map, stride)
 
     output_shape = image_HW(view.patch_count) + [feature_map]
 
@@ -44,6 +42,7 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
             view.out_image_width,
             view.out_image_height,
             feature_map)
+
     if flags.random_inducing:
         conv_features = PatchInducingFeature(np.random.randn(flags.M, filter_size*2))
     else:
@@ -54,7 +53,7 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
     conv_mean.set_trainable(False)
 
     conv_layer = ConvLayer(
-        base_kernel=kernels.RBF(filter_size**2, lengthscales=2, variance=2),
+        base_kernel=kernels.ArcCosine(filter_size**2 * NHWC[3], order=1),
         mean_function=conv_mean,
         feature=conv_features,
         view=view,
@@ -86,13 +85,11 @@ def build_model(flags, X_train, Y_train):
     Z_rbf = select_initial_inducing_points(H_X, flags.M)
     rbf_features = features.InducingPoints(Z_rbf)
     conv_output_count = conv_layers[-1].num_outputs
-    layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count, lengthscales=2, variance=2, ARD=True),
+    layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count),
                 num_outputs=10,
                 feature=rbf_features,
                 mean_function=gpflow.mean_functions.Zero(output_dim=10),
                 white=False)]
-
-    layers[-1].q_sqrt = layers[-1].q_sqrt.value * 1e-5
 
     return DGP_Base(X_train, Y_train,
             likelihood=gpflow.likelihoods.MultiClass(10),

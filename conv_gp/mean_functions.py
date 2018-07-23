@@ -22,10 +22,12 @@ class Conv2dMean(gpflow.mean_functions.MeanFunction):
         return tf.reshape(convolved, [NHWC[0], -1])
 
     def _init_filter(self):
-        # Only supports square filters with odd size for now.
-        identity_filter = np.zeros((self.filter_size, self.filter_size), dtype=gpflow.settings.float_type)
-        identity_filter[self.filter_size // 2, self.filter_size // 2] = 1.0
-        return np.tile(identity_filter[:, :, None, None], [1, 1, self.feature_maps_in, self.feature_maps_out])
+        # Only supports square filters with odd size for now. The first feature maps copies the input,
+        # the rest is zero mean.
+        identity_filter = np.zeros((self.filter_size, self.filter_size,
+            self.feature_maps_in, self.feature_maps_out), dtype=gpflow.settings.float_type)
+        identity_filter[self.filter_size // 2, self.filter_size // 2, 0, 0] = 1.0
+        return identity_filter
 
 class PatchwiseConv2d(Conv2dMean):
     def __init__(self, filter_size, feature_maps_in, out_height, out_width):

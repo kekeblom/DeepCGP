@@ -8,7 +8,7 @@ float_type = float64
 int_type = int32
 
 [numerics]
-jitter_level = 1e-5
+jitter_level = 1e-3
 
 [profiling]
 dump_timeline = False

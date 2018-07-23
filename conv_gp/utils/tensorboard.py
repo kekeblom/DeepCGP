@@ -35,6 +35,8 @@ class LogLikelihoodLogger(TensorBoardTask):
                 })
             log_likelihood += batch_likelihood
 
+        log_likelihood = log_likelihood / (batches * self.batch_size)
+
         return model.enquire_session().run(self.summary, feed_dict={
             self.likelihood_holder: log_likelihood
         })
@@ -102,13 +104,13 @@ class LayerOutputLogger(TensorBoardTask):
                 axis = self.plt.subplot2grid((sample_count, feature_maps), loc=(sample, feature_map))
                 axis.set_title("F sample {} feature map {}".format(sample, feature_map))
                 image = samples[sample, feature_map, :, :]
-                img = axis.imshow(image, vmin=0, vmax=1.0)
+                img = axis.imshow(image)
         sample_figure.colorbar(img, ax=sample_figure.axes)
         return self._figure_to_tensor(sample_figure)
 
     def _plot_mean(self, Fmeans, conv_layer):
         feature_maps = conv_layer.gp_count
-        mean_figure = self.plt.figure(figsize=(10 * feature_maps, 10))
+        mean_figure = self.plt.figure(figsize=(5 * feature_maps, 5))
         image = Fmeans[0]
         height = int(np.sqrt(image.size / feature_maps))
         image = image.reshape(height, height, feature_maps)
@@ -116,21 +118,21 @@ class LayerOutputLogger(TensorBoardTask):
         for i in range(feature_maps):
             axis = self.plt.subplot2grid((1, feature_maps), loc=(0, i))
             axis.set_title("Mean fm {}".format(i))
-            img = axis.imshow(image[i], vmin=0, vmax=1)
+            img = axis.imshow(image[i])
 
         mean_figure.colorbar(img, ax=mean_figure.axes)
         return self._figure_to_tensor(mean_figure)
 
     def _plot_variance(self, Fvars, conv_layer):
         feature_maps = conv_layer.gp_count
-        variance_figure = self.plt.figure(figsize=(10 * feature_maps, 10))
+        variance_figure = self.plt.figure(figsize=(5 * feature_maps, 5))
         image = Fvars[0]
         height = int(np.sqrt(image.size / feature_maps))
         image = image.reshape(height, height, feature_maps)
         image = np.transpose(image, [2, 0, 1])
         for i in range(feature_maps):
             axis = self.plt.subplot2grid((1, feature_maps), loc=(0, i))
-            img = axis.imshow(image[i], vmin=0, vmax=1)
+            img = axis.imshow(image[i])
             axis.set_title("Variance fm {}".format(i))
         variance_figure.colorbar(img, ax=variance_figure.axes)
         return self._figure_to_tensor(variance_figure)
@@ -148,38 +150,35 @@ class ModelParameterLogger(TensorBoardTask):
         self.summary = self._build_summary(model)
 
     def _build_summary(self, model):
+        summaries = []
         # Variational distribution parameters.
         q_mu = model.layers[0].q_mu.value
         q_sqrt = model.layers[0].q_sqrt.value
-        q_mu_sum = tf.summary.histogram('q_mu', q_mu)
-        q_sqrt_sum = tf.summary.histogram('q_sqrt', q_sqrt)
+        summaries.append(tf.summary.histogram('q_mu', q_mu))
+        summaries.append(tf.summary.histogram('q_sqrt', q_sqrt))
 
         # Inducing points.
         conv_layer = model.layers[0]
         Z = conv_layer.feature.Z.value
         Z_shape = tf.shape(Z)
-        Z_sum = tf.summary.histogram('Z', Z)
+        summaries.append(tf.summary.histogram('Z', Z))
+
+        if isinstance(conv_layer.base_kernel, gpflow.kernels.RBF):
+            length_scale = conv_layer.base_kernel.lengthscales.value
+            summaries.append(tf.summary.scalar('base_kernel_length_scale', length_scale))
 
         variance = conv_layer.base_kernel.variance.value
-        length_scale = conv_layer.base_kernel.lengthscales.value
-
-        var_sum = tf.summary.scalar('base_kernel_var', variance)
-        ls_sum = tf.summary.histogram('base_kernel_length_scale', length_scale)
+        summaries.append(tf.summary.scalar('base_kernel_var', variance))
 
         rbf_layer = [layer for layer in model.layers if isinstance(layer, SVGP_Layer)][0]
-        rbf_var_sum = tf.summary.histogram('rbf_var',
-                rbf_layer.kern.variance.value)
-        rbf_ls_sum = tf.summary.histogram('rbf_lengthscale',
-                rbf_layer.kern.lengthscales.value)
+        kernel = rbf_layer.kern
+        summaries.append(tf.summary.histogram('rbf_var',
+                kernel.variance.value))
+        if isinstance(kernel, gpflow.kernels.RBF):
+            summaries.append(tf.summary.histogram('rbf_lengthscale',
+                    rbf_layer.kern.lengthscales.value))
 
-        return tf.summary.merge([
-            q_mu_sum,
-            q_sqrt_sum,
-            Z_sum,
-            var_sum,
-            ls_sum,
-            rbf_var_sum,
-            rbf_ls_sum])
+        return tf.summary.merge(summaries)
 
 class PatchCovarianceLogger(TensorBoardTask):
     def __init__(self, model):
