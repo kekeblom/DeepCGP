@@ -68,7 +68,6 @@ class ConvLayer(Layer):
         self.conv_kernel = MultiOutputConvKernel(base_kernel,
                 np.prod(view.input_size) * view.feature_maps, patch_count=self.patch_count)
 
-
         self.white = white
 
         self.feature = feature

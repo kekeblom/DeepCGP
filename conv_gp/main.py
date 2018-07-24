@@ -11,7 +11,7 @@ from doubly_stochastic_dgp.layers import SVGP_Layer
 from kernels import ConvKernel, PatchInducingFeature
 from layers import ConvLayer
 from views import FullView, RandomPartialView
-from mean_functions import Conv2dMean
+from mean_functions import Conv2dMean, IdentityConv2dMean
 from gpflow.actions import Loop
 
 def select_initial_inducing_points(X, M):
@@ -26,6 +26,11 @@ def image_HW(patch_count):
     image_height = int(np.sqrt(patch_count))
     return [image_height, image_height]
 
+def identity_conv(NHWC_X, filter_size, feature_maps_in, feature_maps_out, stride):
+    conv = IdentityConv2dMean(filter_size, feature_maps_in, feature_maps_out, stride)
+    sess = conv.enquire_session()
+    return sess.run(conv(NHWC_X))
+
 def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
     NHWC = NHWC_X.shape
     view = FullView(input_size=NHWC[1:3],
@@ -33,16 +38,11 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
             feature_maps=NHWC[3],
             stride=stride)
 
-    conv_mean = Conv2dMean(filter_size, NHWC[3], feature_map, stride)
+    conv_mean = gpflow.mean_functions.Zero()
 
     output_shape = image_HW(view.patch_count) + [feature_map]
 
-    sess = conv_mean.enquire_session()
-    H_X = sess.run(conv_mean(NHWC_X)).reshape(-1,
-            view.out_image_width,
-            view.out_image_height,
-            feature_map)
-
+    H_X = identity_conv(NHWC_X, filter_size, NHWC[3], feature_map, stride)
     if flags.random_inducing:
         conv_features = PatchInducingFeature(np.random.randn(flags.M, filter_size*2))
     else:
@@ -61,7 +61,7 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
         gp_count=feature_map)
 
     # Start with low variance.
-    conv_layer.q_sqrt = conv_layer.q_sqrt.value * 1e-5
+    conv_layer.q_sqrt = conv_layer.q_sqrt.value * 1e-3
 
     return conv_layer, H_X
 
@@ -85,7 +85,7 @@ def build_model(flags, X_train, Y_train):
     Z_rbf = select_initial_inducing_points(H_X, flags.M)
     rbf_features = features.InducingPoints(Z_rbf)
     conv_output_count = conv_layers[-1].num_outputs
-    layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count),
+    layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count, ARD=True),
                 num_outputs=10,
                 feature=rbf_features,
                 mean_function=gpflow.mean_functions.Zero(output_dim=10),

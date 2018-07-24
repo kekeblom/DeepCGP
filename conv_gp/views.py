@@ -36,12 +36,11 @@ class FullView(View):
                 "VALID")
 
     def extract_patches_PNL(self, NHWC_X):
-        NHWK_patches = self._extract_image_patches(NHWC_X)
-        KNHW_patches = tf.transpose(NHWK_patches, [3, 0, 1, 2])
-        # Currently only one filter map is supported. This should blow up
-        # if this is not the case.
         N = tf.shape(NHWC_X)[0]
-        return tf.reshape(KNHW_patches, [self.patch_count, N, self.patch_length])
+        NHWK_patches = self._extract_image_patches(NHWC_X)
+        NKHW_patches = tf.transpose(NHWK_patches, [0, 3, 1, 2])
+        NLP_patches = tf.reshape(NKHW_patches, [-1, self.patch_length, self.patch_count])
+        return tf.transpose(NLP_patches, [2, 0, 1])
 
     def extract_patches(self, NHWC_X):
         """extract_patches
@@ -49,7 +48,7 @@ class FullView(View):
         :param X: N x height x width x feature_maps
         :returns N x patch_count * feature_maps x patch_length
         """
-        # X: batch x height * width * feature_maps
+        # X: batch x height x width x feature_maps
         NHWK_patches = self._extract_image_patches(NHWC_X)
         N = tf.shape(NHWC_X)[0]
         NKHW_patches = tf.transpose(NHWK_patches, [0, 3, 1, 2])

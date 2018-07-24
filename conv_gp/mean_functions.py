@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 from gpflow.decors import params_as_tensors
 
-class Conv2dMean(gpflow.mean_functions.MeanFunction):
+class IdentityConv2dMean(gpflow.mean_functions.MeanFunction):
     def __init__(self, filter_size, feature_maps_in, feature_maps_out=1, stride=1):
         super().__init__()
         self.filter_size = filter_size
@@ -21,6 +21,14 @@ class Conv2dMean(gpflow.mean_functions.MeanFunction):
         NHWC = tf.shape(NHWC_X)
         return tf.reshape(convolved, [NHWC[0], -1])
 
+    def _init_filter(self):
+        identity_filter = np.zeros((self.filter_size, self.filter_size,
+            self.feature_maps_in, self.feature_maps_out), dtype=gpflow.settings.float_type)
+        identity_filter[self.filter_size // 2, self.filter_size // 2, :, :] = 1.0
+        return identity_filter
+
+class Conv2dMean(IdentityConv2dMean):
+    """The first filter map copies the center most pixel in the input and the rest are zero mean."""
     def _init_filter(self):
         # Only supports square filters with odd size for now. The first feature maps copies the input,
         # the rest is zero mean.
