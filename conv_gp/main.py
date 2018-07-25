@@ -31,7 +31,7 @@ def identity_conv(NHWC_X, filter_size, feature_maps_in, feature_maps_out, stride
     sess = conv.enquire_session()
     return sess.run(conv(NHWC_X))
 
-def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
+def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
     NHWC = NHWC_X.shape
     view = FullView(input_size=NHWC[1:3],
             filter_size=filter_size,
@@ -44,16 +44,24 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
 
     H_X = identity_conv(NHWC_X, filter_size, NHWC[3], feature_map, stride)
     if flags.random_inducing:
-        conv_features = PatchInducingFeature(np.random.randn(flags.M, filter_size*2))
+        conv_features = PatchInducingFeature(np.random.randn(M, filter_size*2))
     else:
         conv_features = PatchInducingFeature.from_images(
                 NHWC_X,
-                flags.M,
+                M,
                 filter_size)
     conv_mean.set_trainable(False)
 
+    patch_length = filter_size ** 2 * NHWC[3]
+    if flags.base_kernel == 'rbf':
+        base_kernel = kernels.RBF(patch_length, variance=2.0, lengthscales=2.0)
+    elif flags.base_kernel == 'acos':
+        base_kernel = kernels.ArcCosine(patch_length, order=0)
+    else:
+        raise ValueError("Not a valid base-kernel value")
+
     conv_layer = ConvLayer(
-        base_kernel=kernels.ArcCosine(filter_size**2 * NHWC[3], order=1),
+        base_kernel=base_kernel,
         mean_function=conv_mean,
         feature=conv_features,
         view=view,
@@ -61,28 +69,29 @@ def build_conv_layer(flags, NHWC_X, feature_map, filter_size, stride):
         gp_count=feature_map)
 
     # Start with low variance.
-    conv_layer.q_sqrt = conv_layer.q_sqrt.value * 1e-3
+    conv_layer.q_sqrt = conv_layer.q_sqrt.value * 1e-5
 
     return conv_layer, H_X
 
-def build_conv_layers(flags, NHWC_X_train):
+def build_conv_layers(flags, NHWC_X_train, Ms):
     feature_maps = parse_ints(flags.feature_maps)
     filter_sizes = parse_ints(flags.filter_sizes)
     strides = parse_ints(flags.strides)
     H_X = NHWC_X_train
     layers = []
-    for (feature_map, filter_size, stride) in zip(feature_maps, filter_sizes, strides):
-        conv_layer, H_X = build_conv_layer(flags, H_X, feature_map, filter_size, stride)
+    for (M, feature_map, filter_size, stride) in zip(Ms, feature_maps, filter_sizes, strides):
+        conv_layer, H_X = build_conv_layer(flags, H_X, M, feature_map, filter_size, stride)
         layers.append(conv_layer)
     return layers, H_X
 
 def build_model(flags, X_train, Y_train):
     NHWC_X_train = X_train.reshape(-1, 28, 28, 1)
+    Ms = parse_ints(flags.M)
 
-    conv_layers, H_X = build_conv_layers(flags, NHWC_X_train)
+    conv_layers, H_X = build_conv_layers(flags, NHWC_X_train, Ms[0:-1])
     H_X = H_X.reshape(H_X.shape[0], -1)
 
-    Z_rbf = select_initial_inducing_points(H_X, flags.M)
+    Z_rbf = select_initial_inducing_points(H_X, Ms[-1])
     rbf_features = features.InducingPoints(Z_rbf)
     conv_output_count = conv_layers[-1].num_outputs
     layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count, ARD=True),
@@ -230,8 +239,6 @@ def read_args():
             help="Use fashion MNIST instead of regular MNIST.")
     parser.add_argument('-N', type=int,
             help="How many training examples to use.", default=60000)
-    parser.add_argument('-M', type=int, default=64,
-            help="How many inducing points to use.")
     parser.add_argument('--name', type=str, required=True,
             help="What to call the experiment. Determines the directory where results are dumped.")
     parser.add_argument('--lr-decay-steps', type=int, default=50000,
@@ -251,9 +258,12 @@ def read_args():
             help="Either Adam or NatGrad")
     parser.add_argument('--model-path', default='/tmp/mnist/model.ckpt')
 
+    parser.add_argument('-M', type=str, default='64',
+            help="How many inducing points to use at each layer.")
     parser.add_argument('--feature-maps', type=str, default='1')
     parser.add_argument('--filter-sizes', type=str, default='5')
     parser.add_argument('--strides', type=str, default='1')
+    parser.add_argument('--base-kernel', type=str, default='rbf')
 
     parser.add_argument('--gamma', type=float, default=1.0,
             help="Gamma parameter to start with for natgrad.")

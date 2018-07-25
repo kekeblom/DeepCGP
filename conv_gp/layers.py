@@ -125,11 +125,11 @@ class ConvLayer(Layer):
         if full_cov:
             # var: P x G x N x N
             ONN_var = tf.reshape(var, [self.patch_count * self.gp_count, N, N])
-            var = tf.transpose(ONN_var[:, :, :], [2, 1, 0])
+            var = tf.transpose(ONN_var[:, :, :], [1, 2, 0])
         else:
             # var: P x N x G
             var = tf.transpose(var, [1, 0, 2])
-            NO_var = tf.reshape(var, [N, self.patch_count * self.gp_count])
+            var = tf.reshape(var, [N, self.patch_count * self.gp_count])
 
         mean_view = self.view.mean_view(NHWC_X, PNL_patches)
         mean = NO_mean + self.mean_function(mean_view)
