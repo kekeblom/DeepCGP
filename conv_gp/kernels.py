@@ -61,7 +61,7 @@ class ConvKernel(gpflow.kernels.Kernel):
         W = w[None, :] * w[:, None]
         def sumK(p):
             return tf.reduce_sum(self.base_kernel.K(p) * W)
-        return tf.map_fn(sumK, patches) / (self.patch_count ** 2)
+        return tf.map_fn(sumK, patches, parallel_iterations=self.patch_count) / (self.patch_count ** 2)
 
     def Kzx(self, Z, ND_X):
         NHWC_X = self._reshape_X(ND_X)

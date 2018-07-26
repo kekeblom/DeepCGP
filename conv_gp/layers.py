@@ -28,7 +28,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
                 # Returns covariance matrix of size M x N.
                 return self.base_kernel.K(ML_Z, NL_patches)
             # out shape: P x M x N
-            return tf.map_fn(patch_covariance, PNL_patches)
+            return tf.map_fn(patch_covariance, PNL_patches, parallel_iterations=self.patch_count)
 
         return [compute_Kuf(ML_Z) for ML_Z in features.feat_list]
 

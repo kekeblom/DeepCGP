@@ -38,9 +38,8 @@ class FullView(View):
     def extract_patches_PNL(self, NHWC_X):
         N = tf.shape(NHWC_X)[0]
         NHWK_patches = self._extract_image_patches(NHWC_X)
-        NKHW_patches = tf.transpose(NHWK_patches, [0, 3, 1, 2])
-        NLP_patches = tf.reshape(NKHW_patches, [N, self.patch_length, self.patch_count])
-        return tf.transpose(NLP_patches, [2, 0, 1])
+        NPL_patches = tf.reshape(NHWK_patches, [N, self.patch_count, self.patch_length])
+        return tf.transpose(NPL_patches, [1, 0, 2])
 
     def extract_patches(self, NHWC_X):
         """extract_patches
@@ -50,9 +49,7 @@ class FullView(View):
         """
         N = tf.shape(NHWC_X)[0]
         NHWK_patches = self._extract_image_patches(NHWC_X)
-        NKHW_patches = tf.transpose(NHWK_patches, [0, 3, 1, 2])
-        NLP_patches = tf.reshape(NKHW_patches, [N, self.patch_length, self.patch_count])
-        return tf.transpose(NLP_patches, [0, 2, 1])
+        return tf.reshape(NHWK_patches, [N, self.patch_count, self.patch_length])
 
     def _patch_length(self):
         """The number of elements in a patch."""
