@@ -3,6 +3,7 @@ import tensorflow as tf
 import gpflow
 from gpflow import settings
 from gpflow.features import InducingPointsBase
+from gpflow.multioutput.features import SeparateIndependentMof
 from gpflow.params import Parameter
 from gpflow.dispatch import dispatch
 from sklearn import cluster
@@ -93,9 +94,7 @@ def _sample_patches(HW_image, N, patch_size, patch_length):
         out[i] = HW_image[patch_y:patch_y+patch_size, patch_x:patch_x+patch_size].reshape(patch_length)
     return out
 
-class PatchInducingFeature(InducingPointsBase):
-    @classmethod
-    def from_images(cls, NHWC_X, M, patch_size):
+def _cluster_patches(NHWC_X, M, patch_size):
         NHWC = NHWC_X.shape
         patch_length = patch_size ** 2 * NHWC[3]
         # Randomly sample images and patches.
@@ -112,19 +111,32 @@ class PatchInducingFeature(InducingPointsBase):
         k_means = cluster.KMeans(n_clusters=M,
                 init='random', n_jobs=-1)
         k_means.fit(patches)
-        points = k_means.cluster_centers_.reshape(M, patch_length)
-        return PatchInducingFeature(points)
+        return k_means.cluster_centers_
+
+class PatchInducingFeatures(InducingPointsBase):
+    @classmethod
+    def from_images(cls, NHWC_X, M, patch_size):
+        features = _cluster_patches(NHWC_X, M, patch_size)
+        return PatchInducingFeature(features)
+
+class IndependentPatchInducingFeatures(SeparateIndependentMof):
+    @classmethod
+    def from_images(cls, NHWC_X, M, patch_size, count):
+        """Inducing points will be of shape count x M x patch_length"""
+        patch_length = patch_size ** 2 * NHWC_X.shape[3]
+        patches = _cluster_patches(NHWC_X, M, patch_size)
+        np.random.shuffle(patches) # Shuffle along M dimension.
+        inducing_points = patches.reshape(count, M // count, patch_length)
+        return IndependentPatchInducingFeatures([p for p in inducing_points])
 
 
-@dispatch(PatchInducingFeature, ConvKernel)
+@dispatch(PatchInducingFeatures, ConvKernel)
 def Kuu(feature, kern, jitter=0.0):
     return kern.Kzz(feature.Z) + tf.eye(len(feature), dtype=settings.dtypes.float_type) * jitter
 
-@dispatch(PatchInducingFeature, ConvKernel, object)
+@dispatch(PatchInducingFeatures, ConvKernel, object)
 def Kuf(feature, kern, Xnew):
     return kern.Kzx(feature.Z, Xnew)
 
 
-# gpflow.features.conditional.register(PatchInducingFeature,
-#         gpflow.features.default_feature_conditional)
 

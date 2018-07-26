@@ -5,10 +5,10 @@ import gpflow
 import observations
 import utils
 from sklearn import preprocessing, decomposition, cluster
-from gpflow import settings, features, kernels
+from gpflow import settings, kernels, features
 from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import SVGP_Layer
-from kernels import ConvKernel, PatchInducingFeature
+from kernels import ConvKernel, IndependentPatchInducingFeatures, PatchInducingFeatures
 from layers import ConvLayer
 from views import FullView, RandomPartialView
 from mean_functions import Conv2dMean, IdentityConv2dMean
@@ -43,13 +43,11 @@ def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
     output_shape = image_HW(view.patch_count) + [feature_map]
 
     H_X = identity_conv(NHWC_X, filter_size, NHWC[3], feature_map, stride)
-    if flags.random_inducing:
-        conv_features = PatchInducingFeature(np.random.randn(M, filter_size*2))
-    else:
-        conv_features = PatchInducingFeature.from_images(
-                NHWC_X,
-                M,
-                filter_size)
+    conv_features = IndependentPatchInducingFeatures.from_images(
+            NHWC_X,
+            M,
+            filter_size,
+            count=feature_map)
     conv_mean.set_trainable(False)
 
     patch_length = filter_size ** 2 * NHWC[3]
@@ -84,21 +82,41 @@ def build_conv_layers(flags, NHWC_X_train, Ms):
         layers.append(conv_layer)
     return layers, H_X
 
+def build_last_layer(H_X, M, flags):
+    NHWC = H_X.shape
+    conv_output_count = np.prod(NHWC[1:])
+    H_X = H_X.reshape(H_X.shape[0], -1)
+    if flags.last_kernel == 'rbf':
+        kernel = gpflow.kernels.RBF(conv_output_count, ARD=True)
+        Z_rbf = select_initial_inducing_points(H_X, M)
+        inducing = features.InducingPoints(Z_rbf)
+    elif flags.last_kernel == 'conv':
+        filter_size = 5
+        input_dim = filter_size**2 * NHWC[3]
+        view = FullView(input_size=NHWC[1:3],
+                filter_size=filter_size,
+                feature_maps=NHWC[3],
+                stride=1)
+        kernel = ConvKernel(
+                base_kernel=gpflow.kernels.RBF(input_dim, variance=2.0, lengthscales=2.0),
+                view=view)
+        inducing = PatchInducingFeatures.from_images(H_X, M, filter_size)
+    else:
+        raise ValueError("Invalid last layer kernel")
+    return SVGP_Layer(kern=kernel,
+                num_outputs=10,
+                feature=inducing,
+                mean_function=gpflow.mean_functions.Zero(output_dim=10),
+                white=False)
+
 def build_model(flags, X_train, Y_train):
     NHWC_X_train = X_train.reshape(-1, 28, 28, 1)
     Ms = parse_ints(flags.M)
 
     conv_layers, H_X = build_conv_layers(flags, NHWC_X_train, Ms[0:-1])
-    H_X = H_X.reshape(H_X.shape[0], -1)
 
-    Z_rbf = select_initial_inducing_points(H_X, Ms[-1])
-    rbf_features = features.InducingPoints(Z_rbf)
-    conv_output_count = conv_layers[-1].num_outputs
-    layers = conv_layers + [SVGP_Layer(gpflow.kernels.RBF(conv_output_count, ARD=True),
-                num_outputs=10,
-                feature=rbf_features,
-                mean_function=gpflow.mean_functions.Zero(output_dim=10),
-                white=False)]
+    last_layer = build_last_layer(H_X, Ms[-1], flags)
+    layers = conv_layers + [last_layer]
 
     return DGP_Base(X_train, Y_train,
             likelihood=gpflow.likelihoods.MultiClass(10),
@@ -221,10 +239,8 @@ class MNIST(object):
         sample_task = utils.LayerOutputLogger(self.model, self.X_test)
         model_parameter_task = utils.ModelParameterLogger(self.model)
         likelihood = utils.LogLikelihoodLogger()
-        patch_covariance = utils.PatchCovarianceLogger(self.model)
 
-        tasks = [sample_task, model_parameter_task, likelihood,
-                patch_covariance]
+        tasks = [sample_task, likelihood, model_parameter_task]
         self.tensorboard_log = utils.TensorBoardLog(tasks, self.flags.tensorboard_dir, self.flags.name,
                 self.model, self.global_step)
 
@@ -246,7 +262,6 @@ def read_args():
     parser.add_argument('--test-every', type=int, default=5000,
             help="How often to evaluate the test accuracy. Unit optimization iterations.")
     parser.add_argument('--test-size', type=int, default=10000)
-    parser.add_argument('--random-inducing', action='store_true', default=False)
     parser.add_argument('--num-samples', type=int, default=10)
     parser.add_argument('--log-dir', type=str, default='results',
             help="Directory to write the results to.")
@@ -264,6 +279,8 @@ def read_args():
     parser.add_argument('--filter-sizes', type=str, default='5')
     parser.add_argument('--strides', type=str, default='1')
     parser.add_argument('--base-kernel', type=str, default='rbf')
+
+    parser.add_argument('--last-kernel', type=str, default='rbf')
 
     parser.add_argument('--gamma', type=float, default=1.0,
             help="Gamma parameter to start with for natgrad.")

@@ -150,35 +150,16 @@ class ModelParameterLogger(TensorBoardTask):
         self.summary = self._build_summary(model)
 
     def _build_summary(self, model):
-        summaries = []
-        # Variational distribution parameters.
-        q_mu = model.layers[0].q_mu.value
-        q_sqrt = model.layers[0].q_sqrt.value
-        summaries.append(tf.summary.histogram('q_mu', q_mu))
-        summaries.append(tf.summary.histogram('q_sqrt', q_sqrt))
+        parameters = list(model.parameters)
+        scalar_params = [p for p in parameters if p.size == 1]
+        other_params = [p for p in parameters if p.size > 1]
 
-        # Inducing points.
-        conv_layer = model.layers[0]
-        Z = conv_layer.feature.Z.value
-        Z_shape = tf.shape(Z)
-        summaries.append(tf.summary.histogram('Z', Z))
+        scalar_summaries = [tf.summary.scalar(p.pathname, tf.reshape(p.constrained_tensor, []))
+                for p in scalar_params]
+        other_summaries = [tf.summary.histogram(p.full_name, p.constrained_tensor)
+                for p in other_params]
 
-        if isinstance(conv_layer.base_kernel, gpflow.kernels.RBF):
-            length_scale = conv_layer.base_kernel.lengthscales.value
-            summaries.append(tf.summary.scalar('base_kernel_length_scale', length_scale))
-
-        variance = conv_layer.base_kernel.variance.value
-        summaries.append(tf.summary.scalar('base_kernel_var', variance))
-
-        rbf_layer = [layer for layer in model.layers if isinstance(layer, SVGP_Layer)][0]
-        kernel = rbf_layer.kern
-        summaries.append(tf.summary.histogram('rbf_var',
-                kernel.variance.value))
-        if isinstance(kernel, gpflow.kernels.RBF):
-            summaries.append(tf.summary.histogram('rbf_lengthscale',
-                    rbf_layer.kern.lengthscales.value))
-
-        return tf.summary.merge(summaries)
+        return tf.summary.merge(scalar_summaries + other_summaries)
 
 class PatchCovarianceLogger(TensorBoardTask):
     def __init__(self, model):
