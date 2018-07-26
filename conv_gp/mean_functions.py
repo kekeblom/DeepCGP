@@ -14,12 +14,10 @@ class IdentityConv2dMean(gpflow.mean_functions.MeanFunction):
 
     @params_as_tensors
     def __call__(self, NHWC_X):
-        convolved = tf.nn.conv2d(NHWC_X, self.conv_filter,
+        return tf.nn.conv2d(NHWC_X, self.conv_filter,
                 strides=[1, self.stride, self.stride, 1],
                 padding="VALID",
                 data_format="NHWC")
-        NHWC = tf.shape(NHWC_X)
-        return tf.reshape(convolved, [NHWC[0], -1])
 
     def _init_filter(self):
         identity_filter = np.zeros((self.filter_size, self.filter_size,

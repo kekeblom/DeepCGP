@@ -85,15 +85,15 @@ def build_conv_layers(flags, NHWC_X_train, Ms):
 def build_last_layer(H_X, M, flags):
     NHWC = H_X.shape
     conv_output_count = np.prod(NHWC[1:])
-    H_X = H_X.reshape(H_X.shape[0], -1)
     if flags.last_kernel == 'rbf':
+        H_X = H_X.reshape(H_X.shape[0], -1)
         kernel = gpflow.kernels.RBF(conv_output_count, ARD=True)
         Z_rbf = select_initial_inducing_points(H_X, M)
         inducing = features.InducingPoints(Z_rbf)
     elif flags.last_kernel == 'conv':
         filter_size = 5
         input_dim = filter_size**2 * NHWC[3]
-        view = FullView(input_size=NHWC[1:3],
+        view = FullView(input_size=NHWC[1:],
                 filter_size=filter_size,
                 feature_maps=NHWC[3],
                 stride=1)
