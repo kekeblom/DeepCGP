@@ -129,18 +129,20 @@ class ConvLayer(Layer):
         means_vars = [conditional(i) for i in range(self.gp_count)]
         mean = [item[0] for item in means_vars]
         var = [item[1] for item in means_vars]
-        var = tf.stack(var, axis=0)
-        GPN1_mean = tf.stack(mean, axis=0)
-        NPG_mean = tf.transpose(GPN1_mean[:, :, :, 0], [2, 1, 0])
+
+        PNG_mean = tf.concat(mean, axis=2)
+        NPG_mean = tf.transpose(PNG_mean, [1, 0, 2])
         mean = tf.reshape(NPG_mean, [N, self.num_outputs])
 
         if full_cov:
-            # var: G x P x 1 x N x N
-            var = tf.transpose(var[:, :, 0 :, :], [2, 3, 1, 0])
+            var = tf.concat(var, axis=1)
+            # var: P x G x N x N
+            var = tf.transpose(var, [2, 3, 0, 1])
             var = tf.reshape(var, [N, N, self.num_outputs])
         else:
-            # var: G x P x N x 1
-            var = tf.transpose(var[:, :, :, 0], [2, 1, 0])
+            var = tf.concat(var, axis=2)
+            # var: P x N x G
+            var = tf.transpose(var, [1, 0, 2])
             var = tf.reshape(var, [N, self.num_outputs])
 
         mean_view = self.view.mean_view(NHWC_X, PNL_patches)
