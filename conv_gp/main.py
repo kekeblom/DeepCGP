@@ -8,7 +8,7 @@ from sklearn import preprocessing, decomposition, cluster
 from gpflow import settings, kernels, features
 from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import SVGP_Layer
-from kernels import ConvKernel, IndependentPatchInducingFeatures, PatchInducingFeatures
+from kernels import ConvKernel, IndependentPatchInducingFeatures, PatchInducingFeatures, AdditivePatchKernel
 from layers import ConvLayer
 from views import FullView, RandomPartialView
 from mean_functions import Conv2dMean, IdentityConv2dMean
@@ -90,19 +90,24 @@ def build_last_layer(H_X, M, flags):
         kernel = gpflow.kernels.RBF(conv_output_count, ARD=True)
         Z_rbf = select_initial_inducing_points(H_X, M)
         inducing = features.InducingPoints(Z_rbf)
-    elif flags.last_kernel == 'conv':
+    else:
         filter_size = 5
         input_dim = filter_size**2 * NHWC[3]
         view = FullView(input_size=NHWC[1:],
                 filter_size=filter_size,
                 feature_maps=NHWC[3],
                 stride=1)
-        kernel = ConvKernel(
-                base_kernel=gpflow.kernels.RBF(input_dim, variance=2.0, lengthscales=2.0),
-                view=view)
         inducing = PatchInducingFeatures.from_images(H_X, M, filter_size)
-    else:
-        raise ValueError("Invalid last layer kernel")
+        if flags.last_kernel == 'conv':
+            kernel = ConvKernel(
+                    base_kernel=gpflow.kernels.RBF(input_dim, variance=2.0, lengthscales=2.0),
+                    view=view)
+        elif flags.last_kernel == 'add':
+            kernel = AdditivePatchKernel(
+                    base_kernel=gpflow.kernels.RBF(input_dim, variance=2.0, lengthscales=2.0),
+                    view=view)
+        else:
+            raise ValueError("Invalid last layer kernel")
     return SVGP_Layer(kern=kernel,
                 num_outputs=10,
                 feature=inducing,

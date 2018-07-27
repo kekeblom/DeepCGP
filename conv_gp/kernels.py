@@ -12,20 +12,70 @@ def _sample(tensor, count):
     chosen_indices = np.random.choice(np.arange(tensor.shape[0]), count)
     return tensor[chosen_indices]
 
-class ConvKernel(gpflow.kernels.Kernel):
-    # Loosely based on https://github.com/markvdw/convgp/blob/master/convgp/convkernels.py
+class AdditivePatchKernel(gpflow.kernels.Kernel):
+    """This conv kernel sums over each patch assuming the output is produced independently from each patch.
+        K(x, x') = \sum_{i} w_i k(x[i], x'[i])
+    """
     def __init__(self, base_kernel, view):
         super().__init__(input_dim=np.prod(view.input_size))
         self.base_kernel = base_kernel
         self.view = view
         self.patch_length = view.patch_length
         self.patch_count = view.patch_count
-        self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
         self.image_size = self.view.input_size
 
     def _reshape_X(self, ND_X):
         ND = tf.shape(ND_X)
         return tf.reshape(ND_X, [ND[0]] + list(self.view.input_size))
+
+    def K(self, ND_X, X2=None):
+        NHWC_X = self._reshape_X(ND_X)
+        patch_length = self.patch_length
+        PNL_patches = self.view.extract_patches_PNL(NHWC_X)
+
+        if X2 is None:
+            PNL_patches2 = patches
+        else:
+            PNL_patches2 = self.view.extract_patches_PNL(self._reshape_X(X2))
+
+        def compute_K(tupled):
+            NL_patches1, NL_patches2 = tupled
+            return self.base_kernel.K(NL_patches1, NL_patches2)
+
+        PNN_K = tf.map_fn(compute_K, (PNL_patches, PNL_patches2), settings.float_type,
+                parallel_iterations=self.patch_count)
+
+        return tf.reduce_mean(PNN_K, [0])
+
+    def Kdiag(self, ND_X):
+        NHWC_X = self._reshape_X(ND_X)
+        PNL_patches = self.view.extract_patches_PNL(NHWC_X)
+        def compute_Kdiag(NL_patches):
+            return self.base_kernel.Kdiag(NL_patches)
+        PN_K = tf.map_fn(compute_Kdiag, PNL_patches,
+                parallel_iterations=self.patch_count)
+        return tf.reduce_mean(PN_K, [0])
+
+    def Kzx(self, ML_Z, ND_X):
+        NHWC_X = self._reshape_X(ND_X)
+        # Patches: N x patch_count x patch_length
+        PNL_patches = self.view.extract_patches_PNL(NHWC_X)
+        def compute_Kuf(NL_patches):
+            return self.base_kernel.K(ML_Z, NL_patches)
+
+        KMN_Kuf = tf.map_fn(compute_Kuf, PNL_patches,
+                parallel_iterations=self.patch_count)
+
+        return tf.reduce_mean(KMN_Kuf, [0])
+
+    def Kzz(self, Z):
+        return self.base_kernel.K(Z)
+
+class ConvKernel(AdditivePatchKernel):
+    # Loosely based on https://github.com/markvdw/convgp/blob/master/convgp/convkernels.py
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
 
     def K(self, ND_X, X2=None):
         NHWC_X = self._reshape_X(ND_X)
@@ -84,6 +134,7 @@ class ConvKernel(gpflow.kernels.Kernel):
     def Kzz(self, Z):
         return self.base_kernel.K(Z)
 
+
 def _sample_patches(HW_image, N, patch_size, patch_length):
     out = np.zeros((N, patch_length))
     for i in range(N):
@@ -128,11 +179,19 @@ class IndependentPatchInducingFeatures(SeparateIndependentMof):
         return IndependentPatchInducingFeatures([p for p in inducing_points])
 
 
-@dispatch(PatchInducingFeatures, ConvKernel)
+@dispatch(PatchInducingFeatures, AdditivePatchKernel)
 def Kuu(feature, kern, jitter=0.0):
     return kern.Kzz(feature.Z) + tf.eye(len(feature), dtype=settings.dtypes.float_type) * jitter
 
-@dispatch(PatchInducingFeatures, ConvKernel, object)
+@dispatch(PatchInducingFeatures, AdditivePatchKernel, object)
+def Kuf(feature, kern, Xnew):
+    return kern.Kzx(feature.Z, Xnew)
+
+@dispatch(IndependentPatchInducingFeatures, ConvKernel)
+def Kuu(feature, kern, jitter=0.0):
+    return kern.Kzz(feature.Z) + tf.eye(len(feature), dtype=settings.dtypes.float_type) * jitter
+
+@dispatch(IndependentPatchInducingFeatures, ConvKernel, object)
 def Kuf(feature, kern, Xnew):
     return kern.Kzx(feature.Z, Xnew)
 
