@@ -137,6 +137,8 @@ class MNIST(object):
         self._setup_model()
         self._setup_optimizer()
         self._setup_logger()
+        if flags.load_model:
+            self._load_model()
 
     def conclude(self):
         self.log.close()
@@ -144,7 +146,7 @@ class MNIST(object):
     def train_step(self):
         self._optimize()
         self._log_step()
-        self._checkpoint_model()
+        self._save_model_parameters()
 
     def _log_step(self):
         entry = self.log.write_entry(self.model)
@@ -155,14 +157,21 @@ class MNIST(object):
         numiter = self.flags.test_every
         Loop(self.optimizers, stop=numiter)()
 
-    def _checkpoint_model(self):
-        saver = tf.train.Saver()
-        model_session = self.model.enquire_session()
-        saver.save(model_session, self.flags.model_path)
+    def _save_model_parameters(self):
+        trainables = self.model.read_trainables()
+        trainables['global_step'] = self.model.enquire_session().run(self.global_step)
+        np.save(self.flags.model_path, trainables)
+
+    def _load_model(self):
+        trainables = np.load(self.flags.model_path).item()
+        global_step = trainables['global_step']
+        del trainables['global_step']
+        self.model.assign(trainables)
+        sess = self.model.enquire_session()
+        sess.run(self.global_step.assign(global_step))
 
     def _setup_model(self):
         self.model = build_model(self.flags, self.X_train, self.Y_train)
-        self.model.compile()
 
     def _setup_learning_rate(self):
         self.learning_rate = tf.train.exponential_decay(self.flags.lr, global_step=self.global_step,
@@ -276,7 +285,7 @@ def read_args():
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/mnist/tensorboard')
     parser.add_argument('--optimizer', type=str, default='Adam',
             help="Either Adam or NatGrad")
-    parser.add_argument('--model-path', default='/tmp/mnist/model.ckpt')
+    parser.add_argument('--model-path', default='/tmp/mnist/model.npy')
 
     parser.add_argument('-M', type=str, default='64',
             help="How many inducing points to use at each layer.")
@@ -289,6 +298,8 @@ def read_args():
 
     parser.add_argument('--gamma', type=float, default=1.0,
             help="Gamma parameter to start with for natgrad.")
+
+    parser.add_argument('--load-model', action='store_true')
 
     return parser.parse_args()
 
