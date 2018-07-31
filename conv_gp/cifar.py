@@ -30,7 +30,6 @@ def read_args():
     parser.add_argument('--fashion', action='store_true', default=False,
             help="Use fashion MNIST instead of regular MNIST.")
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/cifar10/tensorboard')
-    parser.add_argument('--model-path', default='/tmp/cifar10/model.npy')
     return parser.parse_args()
 
 def main():

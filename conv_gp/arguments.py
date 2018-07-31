@@ -29,11 +29,12 @@ def default_parser():
     parser.add_argument('-M', type=str, default='64',
             help="How many inducing points to use at each layer.")
     parser.add_argument('--feature-maps', type=str, default='1')
-    parser.add_argument('--filter-sizes', type=str, default='5')
-    parser.add_argument('--strides', type=str, default='1')
+    parser.add_argument('--filter-sizes', type=str, default='5,5')
+    parser.add_argument('--strides', type=str, default='1,1')
     parser.add_argument('--base-kernel', type=str, default='rbf')
+    parser.add_argument('--white', action='store_true', default=False)
 
-    parser.add_argument('--last-kernel', type=str, default='rbf')
+    parser.add_argument('--last-kernel', type=str, default='add')
 
     parser.add_argument('--gamma', type=float, default=1.0,
             help="Gamma parameter to start with for natgrad.")

@@ -60,7 +60,7 @@ def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
         mean_function=conv_mean,
         feature=conv_features,
         view=view,
-        white=False,
+        white=flags.white,
         gp_count=feature_map)
 
     # Start with low variance.
@@ -68,10 +68,7 @@ def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
 
     return conv_layer, H_X
 
-def build_conv_layers(flags, NHWC_X_train, Ms):
-    feature_maps = parse_ints(flags.feature_maps)
-    filter_sizes = parse_ints(flags.filter_sizes)
-    strides = parse_ints(flags.strides)
+def build_conv_layers(flags, NHWC_X_train, Ms, feature_maps, strides, filter_sizes):
     H_X = NHWC_X_train
     layers = []
     for (M, feature_map, filter_size, stride) in zip(Ms, feature_maps, filter_sizes, strides):
@@ -79,7 +76,7 @@ def build_conv_layers(flags, NHWC_X_train, Ms):
         layers.append(conv_layer)
     return layers, H_X
 
-def build_last_layer(H_X, M, flags):
+def build_last_layer(H_X, M, filter_size, stride, flags):
     NHWC = H_X.shape
     conv_output_count = np.prod(NHWC[1:])
     if flags.last_kernel == 'rbf':
@@ -88,12 +85,11 @@ def build_last_layer(H_X, M, flags):
         Z_rbf = select_initial_inducing_points(H_X, M)
         inducing = features.InducingPoints(Z_rbf)
     else:
-        filter_size = 5
         input_dim = filter_size**2 * NHWC[3]
         view = FullView(input_size=NHWC[1:],
                 filter_size=filter_size,
                 feature_maps=NHWC[3],
-                stride=1)
+                stride=stride)
         inducing = PatchInducingFeatures.from_images(H_X, M, filter_size)
         if flags.last_kernel == 'conv':
             kernel = ConvKernel(
@@ -109,14 +105,19 @@ def build_last_layer(H_X, M, flags):
                 num_outputs=10,
                 feature=inducing,
                 mean_function=gpflow.mean_functions.Zero(output_dim=10),
-                white=False)
+                white=flags.white)
 
 def build_model(flags, NHWC_X_train, Y_train):
     Ms = parse_ints(flags.M)
+    feature_maps = parse_ints(flags.feature_maps)
+    strides = parse_ints(flags.strides)
+    filter_sizes = parse_ints(flags.filter_sizes)
 
-    conv_layers, H_X = build_conv_layers(flags, NHWC_X_train, Ms[0:-1])
+    assert len(strides) == len(filter_sizes)
 
-    last_layer = build_last_layer(H_X, Ms[-1], flags)
+    conv_layers, H_X = build_conv_layers(flags, NHWC_X_train, Ms[0:-1], feature_maps, strides, filter_sizes)
+
+    last_layer = build_last_layer(H_X, Ms[-1], filter_sizes[-1], strides[-1], flags)
     layers = conv_layers + [last_layer]
 
     X = NHWC_X_train.reshape(-1, np.prod(NHWC_X_train.shape[1:]))

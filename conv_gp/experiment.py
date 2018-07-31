@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import tensorflow as tf
 import gpflow
@@ -38,13 +39,16 @@ class Experiment(object):
         numiter = self.flags.test_every
         Loop(self.optimizers, stop=numiter)()
 
+    def _model_path(self):
+        return os.path.join(self.flags.log_dir, self.flags.name + '.npy')
+
     def _save_model_parameters(self):
         trainables = self.model.read_trainables()
         trainables['global_step'] = self.model.enquire_session().run(self.global_step)
-        np.save(self.flags.model_path, trainables)
+        np.save(self._model_path(), trainables)
 
     def _load_model(self):
-        trainables = np.load(self.flags.model_path).item()
+        trainables = np.load(self._model_path()).item()
         global_step = trainables['global_step']
         del trainables['global_step']
         self.model.assign(trainables)
