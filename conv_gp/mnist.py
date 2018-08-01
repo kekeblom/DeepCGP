@@ -50,6 +50,8 @@ def read_args():
             help="Use fashion MNIST instead of regular MNIST.")
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/mnist/tensorboard')
     parser.add_argument('--model-path', default='/tmp/mnist/model.npy')
+    parser.add_argument('-N', type=int,
+            help="How many training examples to use.", default=60000)
     return parser.parse_args()
 
 

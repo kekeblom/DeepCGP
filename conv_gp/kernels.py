@@ -23,6 +23,7 @@ class AdditivePatchKernel(gpflow.kernels.Kernel):
         self.patch_length = view.patch_length
         self.patch_count = view.patch_count
         self.image_size = self.view.input_size
+        self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
 
     def _reshape_X(self, ND_X):
         ND = tf.shape(ND_X)
@@ -39,10 +40,10 @@ class AdditivePatchKernel(gpflow.kernels.Kernel):
             PNL_patches2 = self.view.extract_patches_PNL(self._reshape_X(X2))
 
         def compute_K(tupled):
-            NL_patches1, NL_patches2 = tupled
-            return self.base_kernel.K(NL_patches1, NL_patches2)
+            NL_patches1, NL_patches2, weight = tupled
+            return weight * self.base_kernel.K(NL_patches1, NL_patches2)
 
-        PNN_K = tf.map_fn(compute_K, (PNL_patches, PNL_patches2), settings.float_type,
+        PNN_K = tf.map_fn(compute_K, (PNL_patches, PNL_patches2, self.patch_weights), settings.float_type,
                 parallel_iterations=self.patch_count)
 
         return tf.reduce_mean(PNN_K, [0])
@@ -50,9 +51,10 @@ class AdditivePatchKernel(gpflow.kernels.Kernel):
     def Kdiag(self, ND_X):
         NHWC_X = self._reshape_X(ND_X)
         PNL_patches = self.view.extract_patches_PNL(NHWC_X)
-        def compute_Kdiag(NL_patches):
-            return self.base_kernel.Kdiag(NL_patches)
-        PN_K = tf.map_fn(compute_Kdiag, PNL_patches,
+        def compute_Kdiag(tupled):
+            NL_patches, weight = tupled
+            return weight * self.base_kernel.Kdiag(NL_patches)
+        PN_K = tf.map_fn(compute_Kdiag, (PNL_patches, self.patch_weights), settings.float_type,
                 parallel_iterations=self.patch_count)
         return tf.reduce_mean(PN_K, [0])
 
@@ -60,10 +62,11 @@ class AdditivePatchKernel(gpflow.kernels.Kernel):
         NHWC_X = self._reshape_X(ND_X)
         # Patches: N x patch_count x patch_length
         PNL_patches = self.view.extract_patches_PNL(NHWC_X)
-        def compute_Kuf(NL_patches):
-            return self.base_kernel.K(ML_Z, NL_patches)
+        def compute_Kuf(tupled):
+            NL_patches, weight = tupled
+            return weight * self.base_kernel.K(ML_Z, NL_patches)
 
-        KMN_Kuf = tf.map_fn(compute_Kuf, PNL_patches,
+        KMN_Kuf = tf.map_fn(compute_Kuf, (PNL_patches, self.patch_weights), settings.float_type,
                 parallel_iterations=self.patch_count)
 
         return tf.reduce_mean(KMN_Kuf, [0])
