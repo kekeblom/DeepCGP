@@ -18,19 +18,16 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
         return self.base_kernel.K(ML_Z) + tf.eye(M,
                 dtype=settings.float_type) * settings.jitter
 
-    def Kuf(self, features, PNL_patches):
+    def Kuf(self, ML_Z, PNL_patches):
         """ Returns covariance between inducing points and input.
-        Output shape: G x P x M x N
+        Output shape: patch_count x M x N
         """
+        def patch_covariance(NL_patches):
+            # Returns covariance matrix of size M x N.
+            return self.base_kernel.K(ML_Z, NL_patches)
 
-        def compute_Kuf(ML_Z):
-            def patch_covariance(NL_patches):
-                # Returns covariance matrix of size M x N.
-                return self.base_kernel.K(ML_Z, NL_patches)
-            # out shape: P x M x N
-            return tf.map_fn(patch_covariance, PNL_patches, parallel_iterations=self.patch_count)
-
-        return [compute_Kuf(ML_Z) for ML_Z in features.feat_list]
+        PMN_Kzx = tf.map_fn(patch_covariance, PNL_patches, parallel_iterations=self.patch_count)
+        return PMN_Kzx
 
     def Kff(self, PNL_patches):
         """Kff returns auto covariance of the input.
@@ -74,9 +71,9 @@ class ConvLayer(Layer):
 
         self.feature = feature
 
-        self.num_inducing = feature.feat_list[0].shape[0]
+        self.num_inducing = len(feature)
 
-        q_mu = np.zeros((self.num_inducing, gp_count), dtype=settings.float_type)
+        q_mu = np.zeros((self.num_inducing, self.gp_count)).astype(settings.float_type)
         self.q_mu = gpflow.Param(q_mu)
 
         #TODO figure out if we need whitened vs non-whitened GP.
@@ -105,48 +102,36 @@ class ConvLayer(Layer):
         NHWC_X = tf.reshape(ND_X, [N, self.view.input_size[0], self.view.input_size[1], self.feature_maps_in])
         PNL_patches = self.view.extract_patches_PNL(NHWC_X)
 
-        GMM_Lu = [tf.cholesky(self.conv_kernel.Kuu(Z)) for Z in self.feature.feat_list]
-
-        GPMN_Kuf = self.conv_kernel.Kuf(self.feature, PNL_patches)
+        MM_Kuu = self.conv_kernel.Kuu(self.feature.Z)
+        PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
 
         if full_cov:
             P_Knn = self.conv_kernel.Kff(PNL_patches)
         else:
             P_Knn = self.conv_kernel.Kdiag(PNL_patches)
 
-        def conditional(i):
-            MM_Lu = GMM_Lu[i]
-            PMN_Kuf = GPMN_Kuf[i]
-            q_mu = self.q_mu[:, i][:, None]
-            q_sqrt = self.q_sqrt[i, :, :][None, :, :]
-            def patch_conditional(tupled):
-                MN_Kuf, Knn = tupled
-                return base_conditional(MN_Kuf, MM_Lu, Knn, q_mu, full_cov=full_cov,
-                        q_sqrt=q_sqrt, white=self.white)
-            return tf.map_fn(patch_conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
-                    parallel_iterations=self.patch_count)
+        Lm = tf.cholesky(MM_Kuu)
 
-        means_vars = [conditional(i) for i in range(self.gp_count)]
-        mean = [item[0] for item in means_vars]
-        var = [item[1] for item in means_vars]
+        def conditional(tupled):
+            MN_Kuf, Knn = tupled
+            return base_conditional(MN_Kuf, Lm, Knn, self.q_mu, full_cov=full_cov, q_sqrt=self.q_sqrt, white=self.white)
 
-        PNG_mean = tf.concat(mean, axis=2)
-        NPG_mean = tf.transpose(PNG_mean, [1, 0, 2])
-        mean = tf.reshape(NPG_mean, [N, self.num_outputs])
+        PNG_mean, var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
+                parallel_iterations=self.patch_count)
+
+        NO_mean = tf.reshape(tf.transpose(PNG_mean, [1, 0, 2]), [N, self.gp_count * self.patch_count])
 
         if full_cov:
-            var = tf.concat(var, axis=1)
             # var: P x G x N x N
-            var = tf.transpose(var, [2, 3, 0, 1])
-            var = tf.reshape(var, [N, N, self.num_outputs])
+            ONN_var = tf.reshape(var, [self.patch_count * self.gp_count, N, N])
+            var = tf.transpose(ONN_var[:, :, :], [1, 2, 0])
         else:
-            var = tf.concat(var, axis=2)
             # var: P x N x G
             var = tf.transpose(var, [1, 0, 2])
-            var = tf.reshape(var, [N, self.num_outputs])
+            var = tf.reshape(var, [N, self.patch_count * self.gp_count])
 
         mean_view = self.view.mean_view(NHWC_X, PNL_patches)
-        mean = mean + self.mean_function(mean_view)
+        mean = NO_mean + self.mean_function(mean_view)
         return mean, var
 
     def KL(self):
@@ -159,21 +144,17 @@ class ConvLayer(Layer):
         if self.white:
             return gauss_kl(self.q_mu, self.q_sqrt, K=None)
         else:
-            return gauss_kl(self.q_mu, self.q_sqrt, self.GMM_Ku_prior)
+            return gauss_kl(self.q_mu, self.q_sqrt, self.MM_Ku_prior)
 
     def _build_prior_cholesky(self):
-        def compute_Ku(ML_Z):
-            return self.conv_kernel.Kuu(ML_Z)
-        self.GMM_Ku_prior = tf.stack([
-            compute_Ku(Z.value) for Z in self.feature.feat_list
-            ], axis=0)
+        self.MM_Ku_prior = self.conv_kernel.Kuu(self.feature.Z.read_value())
+        MM_Lu_prior = tf.linalg.cholesky(self.MM_Ku_prior)
+        self.MM_Lu_prior = self.enquire_session().run(MM_Lu_prior)
 
     def _init_q_S(self):
-        def compute_Lu(ML_Z):
-            MM_Ku = self.conv_kernel.Kuu(ML_Z)
-            return tf.linalg.cholesky(MM_Ku)
-        GMM_Lu = tf.stack([
-            compute_Lu(Z.value) for Z in self.feature.feat_list
-            ], axis=0)
-        return self.enquire_session().run(GMM_Lu)
+        MM_Ku = self.conv_kernel.Kuu(self.feature.Z.read_value())
+        MM_Lu = tf.linalg.cholesky(MM_Ku)
+        MM_Lu = self.enquire_session().run(MM_Lu)
+        return np.tile(MM_Lu[None, :, :], [self.gp_count, 1, 1])
+
 

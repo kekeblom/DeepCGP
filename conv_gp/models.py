@@ -5,7 +5,7 @@ from gpflow import settings, kernels, features
 
 from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import SVGP_Layer
-from kernels import ConvKernel, IndependentPatchInducingFeatures, PatchInducingFeatures, AdditivePatchKernel
+from kernels import ConvKernel, PatchInducingFeatures, AdditivePatchKernel
 from layers import ConvLayer
 from views import FullView, RandomPartialView
 from mean_functions import Conv2dMean, IdentityConv2dMean
@@ -40,11 +40,10 @@ def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
     output_shape = image_HW(view.patch_count) + [feature_map]
 
     H_X = identity_conv(NHWC_X, filter_size, NHWC[3], feature_map, stride)
-    conv_features = IndependentPatchInducingFeatures.from_images(
+    conv_features = PatchInducingFeatures.from_images(
             NHWC_X,
             M,
-            filter_size,
-            count=feature_map)
+            filter_size)
     conv_mean.set_trainable(False)
 
     patch_length = filter_size ** 2 * NHWC[3]

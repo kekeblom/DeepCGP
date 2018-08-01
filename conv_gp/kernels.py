@@ -171,30 +171,11 @@ class PatchInducingFeatures(InducingPointsBase):
         features = _cluster_patches(NHWC_X, M, patch_size)
         return PatchInducingFeatures(features)
 
-class IndependentPatchInducingFeatures(SeparateIndependentMof):
-    @classmethod
-    def from_images(cls, NHWC_X, M, patch_size, count):
-        """Inducing points will be of shape count x M x patch_length"""
-        patch_length = patch_size ** 2 * NHWC_X.shape[3]
-        patches = _cluster_patches(NHWC_X, M, patch_size)
-        np.random.shuffle(patches) # Shuffle along M dimension.
-        inducing_points = patches.reshape(count, M // count, patch_length)
-        return IndependentPatchInducingFeatures([p for p in inducing_points])
-
-
 @dispatch(PatchInducingFeatures, AdditivePatchKernel)
 def Kuu(feature, kern, jitter=0.0):
     return kern.Kzz(feature.Z) + tf.eye(len(feature), dtype=settings.dtypes.float_type) * jitter
 
 @dispatch(PatchInducingFeatures, AdditivePatchKernel, object)
-def Kuf(feature, kern, Xnew):
-    return kern.Kzx(feature.Z, Xnew)
-
-@dispatch(IndependentPatchInducingFeatures, ConvKernel)
-def Kuu(feature, kern, jitter=0.0):
-    return kern.Kzz(feature.Z) + tf.eye(len(feature), dtype=settings.dtypes.float_type) * jitter
-
-@dispatch(IndependentPatchInducingFeatures, ConvKernel, object)
 def Kuf(feature, kern, Xnew):
     return kern.Kzx(feature.Z, Xnew)
 
