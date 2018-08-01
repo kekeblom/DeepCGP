@@ -4,7 +4,7 @@ import gpflow
 from gpflow import settings, features, transforms
 from gpflow.kullback_leiblers import gauss_kl
 from doubly_stochastic_dgp.layers import Layer
-from conditionals import base_conditional
+from conditionals import conditional
 from views import FullView
 
 class MultiOutputConvKernel(gpflow.kernels.Kernel):
@@ -106,32 +106,26 @@ class ConvLayer(Layer):
         PMN_Kuf = self.conv_kernel.Kuf(self.feature.Z, PNL_patches)
 
         if full_cov:
-            P_Knn = self.conv_kernel.Kff(PNL_patches)
+            Knn = self.conv_kernel.Kff(PNL_patches)
         else:
-            P_Knn = self.conv_kernel.Kdiag(PNL_patches)
+            Knn = self.conv_kernel.Kdiag(PNL_patches)
 
-        Lm = tf.cholesky(MM_Kuu)
-
-        def conditional(tupled):
-            MN_Kuf, Knn = tupled
-            return base_conditional(MN_Kuf, Lm, Knn, self.q_mu, full_cov=full_cov, q_sqrt=self.q_sqrt, white=self.white)
-
-        PNG_mean, var = tf.map_fn(conditional, (PMN_Kuf, P_Knn), (settings.float_type, settings.float_type),
-                parallel_iterations=self.patch_count)
-
-        NO_mean = tf.reshape(tf.transpose(PNG_mean, [1, 0, 2]), [N, self.gp_count * self.patch_count])
+        mean, var = conditional(PMN_Kuf, MM_Kuu, Knn, self.q_mu, full_cov=full_cov,
+                q_sqrt=self.q_sqrt, white=self.white)
 
         if full_cov:
-            # var: P x G x N x N
-            ONN_var = tf.reshape(var, [self.patch_count * self.gp_count, N, N])
-            var = tf.transpose(ONN_var[:, :, :], [1, 2, 0])
+            # var: R x P x N x N
+            var = tf.transpose(var, [2, 3, 1, 0])
+            var = tf.reshape(var, [N, N, self.num_outputs])
         else:
-            # var: P x N x G
-            var = tf.transpose(var, [1, 0, 2])
-            var = tf.reshape(var, [N, self.patch_count * self.gp_count])
+            # var: R x P x N
+            var = tf.transpose(var, [2, 1, 0])
+            var = tf.reshape(var, [N, self.num_outputs])
+
+        mean = tf.reshape(mean, [N, self.num_outputs])
 
         mean_view = self.view.mean_view(NHWC_X, PNL_patches)
-        mean = NO_mean + self.mean_function(mean_view)
+        mean = mean + self.mean_function(mean_view)
         return mean, var
 
     def KL(self):
