@@ -8,6 +8,8 @@ from gpflow import settings
 from gpflow.actions import Loop
 from models import build_model
 
+float_type = settings.float_type
+
 class Experiment(object):
     def __init__(self, flags):
         self.flags = flags
@@ -35,9 +37,18 @@ class Experiment(object):
         self.tensorboard_log.write_entry(self.model)
         print(entry)
 
-    def _optimize(self):
+    def _optimize(self, retry=0, error=None):
         numiter = self.flags.test_every
-        Loop(self.optimizers, stop=numiter)()
+        max_retries = 5
+        if retry > max_retries:
+            raise error
+        try:
+            Loop(self.loop, stop=numiter)()
+        except tf.errors.InvalidArgumentError as exception:
+            if self.flags.optimizer != "NatGrad":
+                raise e
+            self.step_back_gamma()
+            self._optimize(retry=retry+1, error=exception)
 
     def _model_path(self):
         return os.path.join(self.flags.log_dir, self.flags.name + '.npy')
@@ -61,32 +72,41 @@ class Experiment(object):
     def _setup_learning_rate(self):
         self.learning_rate = tf.train.exponential_decay(self.flags.lr, global_step=self.global_step,
                 decay_rate=0.1, decay_steps=self.flags.lr_decay_steps)
+        gamma_max = 1.0
+        gamma_step = 1e-3
+        back_step = tf.constant(0.5, dtype=float_type)
+        t = tf.cast(self.global_step, dtype=float_type) / 100.0
+        steps_back = tf.Variable(0.0, dtype=float_type)
+        self.gamma = tf.minimum((t * gamma_step + self.flags.gamma) * tf.pow(back_step, steps_back), gamma_max)
+        self.step_back_gamma = utils.RunOpAction(steps_back.assign(steps_back + 1.0))
+
+        self.model.enquire_session().run(tf.variables_initializer([steps_back]))
 
     def _setup_optimizer(self):
+        self.loop = []
         self.global_step = tf.train.get_or_create_global_step()
         self._setup_learning_rate()
         self.model.enquire_session().run(self.global_step.initializer)
 
-        self.optimizers = []
         if self.flags.optimizer == "NatGrad":
-            variational_parameters = [(self.model.layers[-1].q_mu, self.model.layers[-1].q_sqrt)]
+            variational_parameters = [(l.q_mu, l.q_sqrt) for l in self.model.layers]
 
             for params in variational_parameters:
                 for param in params:
                     param.set_trainable(False)
 
-            nat_grad = gpflow.train.NatGradOptimizer(gamma=self.flags.gamma).make_optimize_action(self.model,
+            nat_grad = gpflow.train.NatGradOptimizer(gamma=self.gamma).make_optimize_action(self.model,
                     var_list=variational_parameters)
-            self.optimizers.append(nat_grad)
+            self.loop.append(nat_grad)
 
         if self.flags.optimizer == "SGD":
             opt = gpflow.train.GradientDescentOptimizer(learning_rate=self.learning_rate)\
                     .make_optimize_action(self.model, global_step=self.global_step)
-            self.optimizers.append(opt)
+            self.loop.append(opt)
         elif self.flags.optimizer == "Adam" or self.flags.optimizer == "NatGrad":
             opt = gpflow.train.AdamOptimizer(learning_rate=self.learning_rate).make_optimize_action(self.model,
                     global_step=self.global_step)
-            self.optimizers.append(opt)
+            self.loop.append(opt)
 
         if self.flags.optimizer not in ["Adam", "NatGrad", "SGD"]:
             raise ValueError("Not a supported optimizer. Try Adam or NatGrad.")
