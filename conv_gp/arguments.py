@@ -34,8 +34,10 @@ def default_parser():
 
     parser.add_argument('--last-kernel', type=str, default='add')
 
-    parser.add_argument('--gamma', type=float, default=0.005,
+    parser.add_argument('--gamma', type=float, default=0.001,
             help="Gamma parameter to start with for natgrad.")
+
+    parser.add_argument('--identity-mean', action='store_true')
 
     parser.add_argument('--load-model', action='store_true')
     return parser

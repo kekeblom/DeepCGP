@@ -35,6 +35,11 @@ class Conv2dMean(IdentityConv2dMean):
         identity_filter[self.filter_size // 2, self.filter_size // 2, 0, 0] = 1.0
         return identity_filter
 
+    def __call__(self, NHWC_X):
+        value = super().__call__(NHWC_X)
+        N = tf.shape(NHWC_X)[0]
+        return tf.reshape(value, [N, -1])
+
 class PatchwiseConv2d(Conv2dMean):
     def __init__(self, filter_size, feature_maps_in, out_height, out_width):
         super().__init__(filter_size, feature_maps_in)

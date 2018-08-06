@@ -46,7 +46,7 @@ class Experiment(object):
             Loop(self.loop, stop=numiter)()
         except tf.errors.InvalidArgumentError as exception:
             if self.flags.optimizer != "NatGrad":
-                raise e
+                raise exception
             self.step_back_gamma()
             self._optimize(retry=retry+1, error=exception)
 
@@ -71,10 +71,10 @@ class Experiment(object):
 
     def _setup_learning_rate(self):
         self.learning_rate = tf.train.exponential_decay(self.flags.lr, global_step=self.global_step,
-                decay_rate=0.1, decay_steps=self.flags.lr_decay_steps)
+                decay_rate=0.1, decay_steps=self.flags.lr_decay_steps, staircase=True)
         gamma_max = 1.0
         gamma_step = 1e-3
-        back_step = tf.constant(0.5, dtype=float_type)
+        back_step = tf.constant(0.2, dtype=float_type)
         t = tf.cast(self.global_step, dtype=float_type) / 100.0
         steps_back = tf.Variable(0.0, dtype=float_type)
         self.gamma = tf.minimum((t * gamma_step + self.flags.gamma) * tf.pow(back_step, steps_back), gamma_max)

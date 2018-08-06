@@ -35,7 +35,11 @@ def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
             feature_maps=NHWC[3],
             stride=stride)
 
-    conv_mean = gpflow.mean_functions.Zero()
+    if flags.identity_mean:
+        conv_mean = Conv2dMean(filter_size, NHWC[3], feature_map,
+                stride=stride)
+    else:
+        conv_mean = gpflow.mean_functions.Zero()
 
     output_shape = image_HW(view.patch_count) + [feature_map]
 
