@@ -3,14 +3,14 @@ import argparse
 
 def train_steps(flags):
     # Roughly until the learning rate becomes 1e-5
-    decay_count = math.log(1e-5 / flags.lr, 0.1) # How many times decay has to be applied to reach 1e-5.
+    decay_count = math.log(1e-4 / flags.lr, 0.1) # How many rounds of decay.
     return math.ceil(flags.lr_decay_steps * decay_count / flags.test_every)
 
 def default_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str, required=True,
             help="What to call the experiment. Determines the directory where results are dumped.")
-    parser.add_argument('--lr-decay-steps', type=int, default=50000,
+    parser.add_argument('--lr-decay-steps', type=int, default=100000,
             help="The program uses exponential learning rate decay with 0.1 decay every lr-decay-steps.")
     parser.add_argument('--test-every', type=int, default=1000,
             help="How often to evaluate the test accuracy. Unit optimization iterations.")

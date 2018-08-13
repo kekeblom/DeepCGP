@@ -30,7 +30,7 @@ def conditional(Kmn, Kmm, Knn, f, *, full_cov=False, q_sqrt=None, white=False):
 
     def solve_A(MN_Kmn):
         return tf.matrix_triangular_solve(Lm, MN_Kmn, lower=True) # M x M @ M x N -> M x N
-    A = tf.map_fn(solve_A, Kmn, parallel_iterations=100) # P x M x N
+    A = tf.map_fn(solve_A, Kmn) # P x M x N
 
     # compute the covariance due to the conditioning
     if full_cov:
@@ -44,7 +44,7 @@ def conditional(Kmn, Kmm, Knn, f, *, full_cov=False, q_sqrt=None, white=False):
     if not white:
         def backsub(MN_A):
             return tf.matrix_triangular_solve(tf.transpose(Lm), MN_A, lower=False)
-        A = tf.map_fn(backsub, A, parallel_iterations=100) # P x M x N
+        A = tf.map_fn(backsub, A) # P x M x N
 
     # construct the conditional mean
     fmean = tf.tensordot(A, f, [[1], [0]]) # P x N x R

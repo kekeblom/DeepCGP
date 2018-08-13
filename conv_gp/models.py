@@ -26,7 +26,8 @@ def image_HW(patch_count):
 def identity_conv(NHWC_X, filter_size, feature_maps_in, feature_maps_out, stride):
     conv = IdentityConv2dMean(filter_size, feature_maps_in, feature_maps_out, stride)
     sess = conv.enquire_session()
-    return sess.run(conv(NHWC_X))
+    random_images = np.random.choice(np.arange(NHWC_X.shape[0]), size=1000)
+    return sess.run(conv(NHWC_X[random_images]))
 
 def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
     NHWC = NHWC_X.shape
@@ -52,7 +53,7 @@ def build_conv_layer(flags, NHWC_X, M, feature_map, filter_size, stride):
 
     patch_length = filter_size ** 2 * NHWC[3]
     if flags.base_kernel == 'rbf':
-        base_kernel = kernels.RBF(patch_length, variance=2.0, lengthscales=2.0)
+        base_kernel = kernels.RBF(patch_length, variance=5.0, lengthscales=5.0)
     elif flags.base_kernel == 'acos':
         base_kernel = kernels.ArcCosine(patch_length, order=0)
     else:
@@ -96,11 +97,11 @@ def build_last_layer(H_X, M, filter_size, stride, flags):
         inducing = PatchInducingFeatures.from_images(H_X, M, filter_size)
         if flags.last_kernel == 'conv':
             kernel = ConvKernel(
-                    base_kernel=gpflow.kernels.RBF(input_dim, variance=2.0, lengthscales=2.0),
+                    base_kernel=gpflow.kernels.RBF(input_dim, variance=5.0, lengthscales=5.0),
                     view=view)
         elif flags.last_kernel == 'add':
             kernel = AdditivePatchKernel(
-                    base_kernel=gpflow.kernels.RBF(input_dim, variance=2.0, lengthscales=2.0),
+                    base_kernel=gpflow.kernels.RBF(input_dim, variance=5.0, lengthscales=5.0),
                     view=view)
         else:
             raise ValueError("Invalid last layer kernel")

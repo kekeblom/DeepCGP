@@ -7,6 +7,8 @@ from doubly_stochastic_dgp.layers import Layer
 from conditionals import conditional
 from views import FullView
 
+float_type = settings.float_type
+
 class MultiOutputConvKernel(gpflow.kernels.Kernel):
     def __init__(self, base_kernel, input_dim, patch_count):
         super().__init__(input_dim=input_dim)
@@ -16,7 +18,7 @@ class MultiOutputConvKernel(gpflow.kernels.Kernel):
     def Kuu(self, ML_Z):
         M = tf.shape(ML_Z)[0]
         return self.base_kernel.K(ML_Z) + tf.eye(M,
-                dtype=settings.float_type) * settings.jitter
+                dtype=float_type) * settings.jitter
 
     def Kuf(self, ML_Z, PNL_patches):
         """ Returns covariance between inducing points and input.
@@ -73,14 +75,14 @@ class ConvLayer(Layer):
 
         self.num_inducing = len(feature)
 
-        q_mu = np.zeros((self.num_inducing, self.gp_count)).astype(settings.float_type)
+        q_mu = self._initial_q_mu()
         self.q_mu = gpflow.Param(q_mu)
 
         #TODO figure out if we need whitened vs non-whitened GP.
         if not self.white:
             GMM_q_sqrt = self._init_q_S()
         else:
-            GMM_q_sqrt = np.tile(np.eye(self.num_inducing, dtype=settings.float_type)[None, :, :], [gp_count, 1, 1])
+            GMM_q_sqrt = np.tile(np.eye(self.num_inducing, dtype=float_type)[None, :, :], [gp_count, 1, 1])
         q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing, num_matrices=self.gp_count)
         self.q_sqrt = gpflow.Param(GMM_q_sqrt, transform=q_sqrt_transform)
 
@@ -150,5 +152,13 @@ class ConvLayer(Layer):
         MM_Lu = tf.linalg.cholesky(MM_Ku)
         MM_Lu = self.enquire_session().run(MM_Lu)
         return np.tile(MM_Lu[None, :, :], [self.gp_count, 1, 1])
+
+    def _initial_q_mu(self):
+        q_mu = np.zeros((self.num_inducing, self.gp_count)).astype(float_type)
+        for i in range(self.gp_count):
+            random_index = np.random.choice(np.arange(self.num_inducing))
+            q_mu[random_index, i] = 1.0
+        return q_mu
+
 
 

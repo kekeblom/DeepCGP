@@ -54,9 +54,14 @@ class Experiment(object):
         return os.path.join(self.flags.log_dir, self.flags.name + '.npy')
 
     def _save_model_parameters(self):
-        trainables = self.model.read_trainables()
+        params = {}
+        sess = self.model.enquire_session()
+        for param in self.model.parameters:
+            value = sess.run(param.parameter_tensor)
+            key = param.pathname
+            params[key] = value
         trainables['global_step'] = self.model.enquire_session().run(self.global_step)
-        np.save(self._model_path(), trainables)
+        np.save(self._model_path(), params)
 
     def _load_model(self):
         trainables = np.load(self._model_path()).item()

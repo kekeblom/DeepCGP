@@ -105,7 +105,7 @@ class Log(LogBase):
 
     def _start_log_file(self, name):
         file_path = os.path.join(self.log_dir, 'log.csv')
-        self.file = open(file_path, 'wt')
+        self.file = open(file_path, 'at')
         self.csv_writer = csv.writer(self.file)
 
     def _human_readable(self, entry):
