@@ -39,6 +39,6 @@ def default_parser():
 
     parser.add_argument('--identity-mean', action='store_true')
 
-    parser.add_argument('--load-model', action='store_true')
+    parser.add_argument('--load-model', type=str, default=None)
     return parser
 

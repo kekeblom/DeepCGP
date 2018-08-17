@@ -53,6 +53,8 @@ class ConvLayer(Layer):
     def __init__(self, base_kernel, mean_function, feature=None, view=None,
             white=False,
             gp_count=1,
+            q_mu=None,
+            q_sqrt=None,
             **kwargs):
         super().__init__(**kwargs)
         self.base_kernel = base_kernel
@@ -75,16 +77,18 @@ class ConvLayer(Layer):
 
         self.num_inducing = len(feature)
 
-        q_mu = self._initial_q_mu()
+        if q_mu is None:
+            q_mu = self._initial_q_mu()
         self.q_mu = gpflow.Param(q_mu)
 
         #TODO figure out if we need whitened vs non-whitened GP.
-        if not self.white:
-            GMM_q_sqrt = self._init_q_S()
-        else:
-            GMM_q_sqrt = np.tile(np.eye(self.num_inducing, dtype=float_type)[None, :, :], [gp_count, 1, 1])
+        if q_sqrt is None:
+            if not self.white:
+                q_sqrt = self._init_q_S()
+            else:
+                q_sqrt = np.tile(np.eye(self.num_inducing, dtype=float_type)[None, :, :], [gp_count, 1, 1])
         q_sqrt_transform = gpflow.transforms.LowerTriangular(self.num_inducing, num_matrices=self.gp_count)
-        self.q_sqrt = gpflow.Param(GMM_q_sqrt, transform=q_sqrt_transform)
+        self.q_sqrt = gpflow.Param(q_sqrt, transform=q_sqrt_transform)
 
         self.mean_function = mean_function
         self._build_prior_cholesky()
@@ -154,11 +158,7 @@ class ConvLayer(Layer):
         return np.tile(MM_Lu[None, :, :], [self.gp_count, 1, 1])
 
     def _initial_q_mu(self):
-        q_mu = np.zeros((self.num_inducing, self.gp_count)).astype(float_type)
-        for i in range(self.gp_count):
-            random_index = np.random.choice(np.arange(self.num_inducing))
-            q_mu[random_index, i] = 1.0
-        return q_mu
+        return np.random.normal(loc=0.0, scale=0.01, size=(self.num_inducing, self.gp_count))
 
 
 

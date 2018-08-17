@@ -6,7 +6,7 @@ import observations
 import utils
 from gpflow import settings
 from gpflow.actions import Loop
-from models import build_model
+from models import ModelBuilder
 
 float_type = settings.float_type
 
@@ -18,8 +18,6 @@ class Experiment(object):
         self._setup_model()
         self._setup_optimizer()
         self._setup_logger()
-        if flags.load_model:
-            self._load_model()
 
     def _load_data(self):
         raise NotImplementedError()
@@ -50,29 +48,25 @@ class Experiment(object):
             self.step_back_gamma()
             self._optimize(retry=retry+1, error=exception)
 
-    def _model_path(self):
-        return os.path.join(self.flags.log_dir, self.flags.name + '.npy')
+    def _model_path(self, model_name=None):
+        if model_name is None:
+            model_name = self.flags.name
+        return os.path.join(self.flags.log_dir, model_name + '.npy')
 
     def _save_model_parameters(self):
         params = {}
         sess = self.model.enquire_session()
         for param in self.model.parameters:
-            value = sess.run(param.parameter_tensor)
+            value = sess.run(param.constrained_tensor)
             key = param.pathname
             params[key] = value
-        trainables['global_step'] = self.model.enquire_session().run(self.global_step)
+        params['global_step'] = sess.run(self.global_step)
         np.save(self._model_path(), params)
 
-    def _load_model(self):
-        trainables = np.load(self._model_path()).item()
-        global_step = trainables['global_step']
-        del trainables['global_step']
-        self.model.assign(trainables)
-        sess = self.model.enquire_session()
-        sess.run(self.global_step.assign(global_step))
-
     def _setup_model(self):
-        self.model = build_model(self.flags, self.X_train, self.Y_train)
+        model_builder = ModelBuilder(self.flags,
+                self.X_train, self.Y_train, model_path=self._model_path(self.flags.load_model))
+        self.model = model_builder.build()
 
     def _setup_learning_rate(self):
         self.learning_rate = tf.train.exponential_decay(self.flags.lr, global_step=self.global_step,
