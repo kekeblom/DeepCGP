@@ -130,7 +130,7 @@ class ModelBuilder(object):
             q_mu=q_mu,
             q_sqrt=q_sqrt)
 
-        if q_sqrt is not None:
+        if q_sqrt is None:
             # Start with low variance.
             conv_layer.q_sqrt = conv_layer.q_sqrt.value * 1e-5
 
@@ -167,14 +167,15 @@ class ModelBuilder(object):
                 inducing = PatchInducingFeatures.from_images(H_X, M, filter_size)
             else:
                 inducing = PatchInducingFeatures(Z)
+            patch_weights = layer_params.get('base_kernel/patch_weights')
             if self.flags.last_kernel == 'conv':
                 kernel = ConvKernel(
                         base_kernel=gpflow.kernels.RBF(input_dim, variance=variance, lengthscales=lengthscales),
-                        view=view)
+                        view=view, patch_weights=patch_weights)
             elif self.flags.last_kernel == 'add':
                 kernel = AdditivePatchKernel(
                         base_kernel=gpflow.kernels.RBF(input_dim, variance=variance, lengthscales=lengthscales),
-                        view=view)
+                        view=view, patch_weights=patch_weights)
             else:
                 raise ValueError("Invalid last layer kernel")
         return SVGP_Layer(kern=kernel,

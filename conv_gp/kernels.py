@@ -16,14 +16,16 @@ class AdditivePatchKernel(gpflow.kernels.Kernel):
     """This conv kernel sums over each patch assuming the output is produced independently from each patch.
         K(x, x') = \sum_{i} w_i k(x[i], x'[i])
     """
-    def __init__(self, base_kernel, view):
+    def __init__(self, base_kernel, view, patch_weights=None):
         super().__init__(input_dim=np.prod(view.input_size))
         self.base_kernel = base_kernel
         self.view = view
         self.patch_length = view.patch_length
         self.patch_count = view.patch_count
         self.image_size = self.view.input_size
-        self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
+        if patch_weights is None or patch_weights.size != self.patch_count:
+            patch_weights = np.ones(self.patch_count, dtype=settings.float_type)
+        self.patch_weights = gpflow.Param(patch_weights)
 
     def _reshape_X(self, ND_X):
         ND = tf.shape(ND_X)
@@ -76,10 +78,6 @@ class AdditivePatchKernel(gpflow.kernels.Kernel):
 
 class ConvKernel(AdditivePatchKernel):
     # Loosely based on https://github.com/markvdw/convgp/blob/master/convgp/convkernels.py
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.patch_weights = gpflow.Param(np.ones(self.patch_count, dtype=settings.float_type))
-
     def K(self, ND_X, X2=None):
         NHWC_X = self._reshape_X(ND_X)
         patch_length = self.patch_length

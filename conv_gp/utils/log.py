@@ -51,7 +51,6 @@ class AccuracyLogger(Logger):
     def __init__(self, X_test, Y_test):
         self.title = 'test_accuracy'
         self.X_test, self.Y_test = X_test, Y_test
-        self.prev_accuracy = None
 
     def __call__(self, model):
         correct = 0
@@ -66,9 +65,7 @@ class AccuracyLogger(Logger):
             probabilities = mean_samples.mean(axis=0)
             predicted_class = probabilities.argmax(axis=1)[:, None]
             correct += (predicted_class == Y).sum()
-        accuracy = correct / self.Y_test.size
-        self.prev_accuracy = accuracy
-        return accuracy
+        return correct / self.Y_test.size
 
 class ModelSaver(object):
     def __init__(self, model, test_dir):

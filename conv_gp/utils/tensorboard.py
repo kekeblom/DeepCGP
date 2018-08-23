@@ -15,7 +15,7 @@ class TensorBoardTask(object):
 class LogLikelihoodLogger(TensorBoardTask):
     def __init__(self):
         self.title = 'train_log_likelihood'
-        self.batch_size = 512
+        self.batch_size = 64
         self.likelihood_holder = tf.placeholder(settings.float_type, shape=())
         self.summary = tf.summary.scalar(self.title, self.likelihood_holder)
 
