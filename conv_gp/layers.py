@@ -158,7 +158,7 @@ class ConvLayer(Layer):
         return np.tile(MM_Lu[None, :, :], [self.gp_count, 1, 1])
 
     def _initial_q_mu(self):
-        return np.random.normal(loc=0.0, scale=0.01, size=(self.num_inducing, self.gp_count))
+        return np.zeros(self.num_inducing, self.gp_count, dtype=float_type)
 
 
 
