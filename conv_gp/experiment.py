@@ -69,8 +69,11 @@ class Experiment(object):
         self.model = model_builder.build()
 
     def _setup_learning_rate(self):
-        self.learning_rate = tf.train.exponential_decay(self.flags.lr, global_step=self.global_step,
-                decay_rate=0.1, decay_steps=self.flags.lr_decay_steps, staircase=True)
+        self.learning_rate = tf.train.cosine_decay_restarts(self.flags.lr, global_step=self.global_step,
+                first_decay_steps=self.flags.lr_decay_steps, t_mul=1.5, m_mul=0.5, alpha=5e-5)
+        # self.learning_rate = tf.train.exponential_decay(self.flags.lr, global_step=self.global_step,
+        #         decay_rate=0.1, decay_steps=self.flags.lr_decay_steps, staircase=True)
+
         gamma_max = 1.0
         gamma_step = 1e-3
         back_step = tf.constant(0.2, dtype=float_type)

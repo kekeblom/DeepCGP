@@ -1,10 +1,14 @@
 import math
 import argparse
+import numpy as np
 
 def train_steps(flags):
-    # Roughly until the learning rate becomes 1e-5
-    decay_count = math.log(1e-4 / flags.lr, 0.1) # How many rounds of decay.
-    return math.ceil(flags.lr_decay_steps * decay_count / flags.test_every)
+    # Three rounds of cosine restarts.
+    number_of_rounds = 2
+    rounds = np.ones(number_of_rounds) * flags.lr_decay_steps
+    multipliers = np.power(1.5, np.arange(number_of_rounds))
+    round_lengths = rounds * multipliers
+    return math.ceil(np.sum(round_lengths).item() / flags.test_every)
 
 def default_parser():
     parser = argparse.ArgumentParser()
