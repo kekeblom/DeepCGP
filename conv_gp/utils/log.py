@@ -54,7 +54,7 @@ class AccuracyLogger(Logger):
 
     def __call__(self, model):
         correct = 0
-        batch_size = 64
+        batch_size = 32
         for i in range(len(self.Y_test) // batch_size + 1):
             the_slice = slice(i * batch_size, (i+1) * batch_size)
             X = self.X_test[the_slice]
