@@ -146,6 +146,14 @@ class ModelBuilder(object):
         q_mu = layer_params.get('q_mu')
         q_sqrt = layer_params.get('q_sqrt')
 
+        if Z is not None:
+            saved_filter_size = int(np.sqrt(Z.shape[1] / NHWC[3]))
+            if filter_size != saved_filter_size:
+                print("filter_size {} != {} for last layer. Resetting parameters.".format(filter_size, saved_filter_size))
+                Z = None
+                q_mu = None
+                q_sqrt = None
+
         if self.flags.last_kernel == 'rbf':
             H_X = H_X.reshape(H_X.shape[0], -1)
             lengthscales = layer_params.get('lengthscales', 5.0)
@@ -167,7 +175,7 @@ class ModelBuilder(object):
                 inducing = PatchInducingFeatures.from_images(H_X, M, filter_size)
             else:
                 inducing = PatchInducingFeatures(Z)
-            patch_weights = layer_params.get('base_kernel/patch_weights')
+            patch_weights = layer_params.get('patch_weights')
             if self.flags.last_kernel == 'conv':
                 kernel = ConvKernel(
                         base_kernel=gpflow.kernels.RBF(input_dim, variance=variance, lengthscales=lengthscales),
@@ -214,7 +222,7 @@ class ModelBuilder(object):
             elif 'base_kernel/lengthscales' in path:
                 layer_values['base_kernel/lengthscales'] = value
             elif 'patch_weights' in path:
-                layer_values['base_kernel/patch_weights'] = value
+                layer_values['patch_weights'] = value
             layer_params[layer] = layer_values
 
         stored_layers = max(layer_params.keys())
