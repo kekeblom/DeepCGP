@@ -10,11 +10,25 @@ from experiment import Experiment
 
 class Cifar(Experiment):
     def _load_data(self):
-        (self.X_train, self.Y_train), (self.X_test, self.Y_test) = observations.cifar10('/tmp/cifar10')
-        self.X_train = np.transpose(self.X_train, [0, 2, 3, 1]).astype(settings.float_type)
-        self.X_test = np.transpose(self.X_test, [0, 2, 3, 1]).astype(settings.float_type)
-        self.Y_train = self.Y_train.reshape(-1, 1)
-        self.Y_test = self.Y_test.reshape(-1, 1)
+        (X_train, Y_train), (X_test, Y_test) = observations.cifar10('/tmp/cifar10')
+        X_train = np.transpose(X_train, [0, 2, 3, 1]).astype(settings.float_type)
+        X_test = np.transpose(X_test, [0, 2, 3, 1]).astype(settings.float_type)
+        Y_train = Y_train.reshape(-1, 1)
+        Y_test = Y_test.reshape(-1, 1)
+
+        X_test = np.concatenate([X_train[self.flags.N:], X_test], axis=0)
+        Y_test = np.concatenate([Y_train[self.flags.N:], Y_test], axis=0)
+        X_train = X_train[0:self.flags.N]
+        Y_train = Y_train[0:self.flags.N]
+
+        assert(Y_train.shape[0] == self.flags.N)
+        assert(X_train.shape[0] == self.flags.N)
+
+        self.X_train = X_train
+        self.Y_train = Y_train
+        self.X_test = X_test
+        self.Y_test = Y_test
+
         self._preprocess_data()
 
     def _preprocess_data(self):
@@ -27,9 +41,8 @@ class Cifar(Experiment):
 
 def read_args():
     parser = default_parser()
-    parser.add_argument('--fashion', action='store_true', default=False,
-            help="Use fashion MNIST instead of regular MNIST.")
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/cifar10/tensorboard')
+    parser.add_argument('--N', type=int, default=50000, help="Use N training examples.")
     return parser.parse_args()
 
 def main():
