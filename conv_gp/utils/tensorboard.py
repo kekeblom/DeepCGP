@@ -23,7 +23,7 @@ class LogLikelihoodLogger(TensorBoardTask):
         with gpflow.decors.params_as_tensors_for(model):
             X_holder, Y_holder = model.X, model.Y
         log_likelihood = 0.0
-        compute_on = 5000
+        compute_on = math.min(5000, model.X._value.shape[0])
         batches = math.ceil(compute_on / self.batch_size)
         for i in range(batches):
             the_slice = slice(i * self.batch_size, (i+1) * self.batch_size)

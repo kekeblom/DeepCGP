@@ -42,7 +42,7 @@ class Cifar(Experiment):
 def read_args():
     parser = default_parser()
     parser.add_argument('--tensorboard-dir', type=str, default='/tmp/cifar10/tensorboard')
-    parser.add_argument('--N', type=int, default=50000, help="Use N training examples.")
+    parser.add_argument('-N', type=int, default=50000, help="Use N training examples.")
     return parser.parse_args()
 
 def main():

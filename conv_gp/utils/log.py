@@ -59,7 +59,7 @@ class AccuracyLogger(Logger):
             the_slice = slice(i * batch_size, (i+1) * batch_size)
             X = self.X_test[the_slice]
             Y = self.Y_test[the_slice]
-            mean_samples, _ = model.predict_y(X, 10)
+            mean_samples, _ = model.predict_y(X, 5)
             # Grab the mean probability over all samples.
             # Then argmax to get the final prediction.
             probabilities = mean_samples.mean(axis=0)
