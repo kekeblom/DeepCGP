@@ -225,6 +225,15 @@ class ModelBuilder(object):
                 layer_values['patch_weights'] = value
             layer_params[layer] = layer_values
 
+        stored_layers = max(layer_params.keys())
+        model_layers = len(Ms)
+        assert stored_layers < model_layers, "Can't load model if "
+        if stored_layers != model_layers:
+            last_layer = max(layer_params.keys())
+            last_layer_params = layer_params[last_layer]
+            del layer_params[last_layer]
+            layer_params[model_layers-1] = last_layer_params
+
         return global_step, layer_params
 
     def _last_layer_parameters(self, layer_params):

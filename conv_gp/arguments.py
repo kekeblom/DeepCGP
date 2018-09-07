@@ -3,7 +3,7 @@ import argparse
 
 def train_steps(flags):
     # Roughly until the learning rate becomes 1e-5
-    decay_count = math.log(1e-5 / flags.lr, 0.1) # How many rounds of decay.
+    decay_count = math.log(5e-5 / flags.lr, 0.1) # How many rounds of decay.
     return math.ceil(flags.lr_decay_steps * decay_count / flags.test_every)
 
 def default_parser():
