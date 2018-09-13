@@ -32,7 +32,7 @@ def default_parser():
     parser.add_argument('--base-kernel', type=str, default='rbf')
     parser.add_argument('--white', action='store_true', default=False)
 
-    parser.add_argument('--last-kernel', type=str, default='add')
+    parser.add_argument('--last-kernel', type=str, default='conv')
 
     parser.add_argument('--gamma', type=float, default=0.001,
             help="Gamma parameter to start with for natgrad.")
