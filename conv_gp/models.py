@@ -12,7 +12,10 @@ from mean_functions import Conv2dMean, IdentityConv2dMean
 from sklearn import cluster
 
 def parse_ints(int_string):
-    return [int(i) for i in int_string.split(',')]
+    if int_string == '':
+        return []
+    else:
+        return [int(i) for i in int_string.split(',')]
 
 def image_HW(patch_count):
     image_height = int(np.sqrt(patch_count))
@@ -225,11 +228,11 @@ class ModelBuilder(object):
                 layer_values['patch_weights'] = value
             layer_params[layer] = layer_values
 
-        stored_layers = max(layer_params.keys())
+        stored_layers = max(layer_params.keys()) + 1
         model_layers = len(Ms)
-        assert stored_layers < model_layers, "Can't load model if "
+        assert stored_layers <= model_layers, "Can't load model if "
         if stored_layers != model_layers:
-            last_layer = max(layer_params.keys())
+            last_layer = stored_layers - 1
             last_layer_params = layer_params[last_layer]
             del layer_params[last_layer]
             layer_params[model_layers-1] = last_layer_params
