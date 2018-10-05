@@ -1,5 +1,5 @@
 tensorflow-gpu>=1.8.0
-gpflow>=1.1.1
+gpflow>=1.2.0
 Observations>=0.1.4
 toml>=0.9
 scikit-learn>=0.19.1

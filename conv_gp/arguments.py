@@ -8,7 +8,7 @@ def train_steps(flags):
 
 def default_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', type=str, required=True,
+    parser.add_argument('--name', type=str, required=True, default='experiment',
             help="What to call the experiment. Determines the directory where results are dumped.")
     parser.add_argument('--lr-decay-steps', type=int, default=100000,
             help="The program uses exponential learning rate decay with 0.1 decay every lr-decay-steps.")

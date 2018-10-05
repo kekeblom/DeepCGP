@@ -1,6 +1,6 @@
 # Deep convolutional gaussian processes
 
-This paper implements deep convolutional gaussian processes, a deep gaussian process model for hierarchically detecting combinations of local features in images.
+This repository implements deep convolutional gaussian processes, a deep gaussian process model for hierarchically detecting combinations of local features in images.
 
 
 ## Setup
