@@ -1,6 +1,3 @@
-[submodule "submodules/GPflow"]
-	path = submodules/GPflow
-	url = https://github.com/GPflow/GPflow
 [submodule "submodules/Doubly-Stochastic-DGP"]
 	path = submodules/Doubly-Stochastic-DGP
 	url = https://github.com/kekeblom/Doubly-Stochastic-DGP
