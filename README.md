@@ -1,5 +1,7 @@
 # Deep convolutional gaussian processes
 
+![Deep convolutional gaussian process](conv-gp.png)
+
 This repository implements deep convolutional gaussian processes, a deep gaussian process model for hierarchically detecting combinations of local features in images.
 
 
