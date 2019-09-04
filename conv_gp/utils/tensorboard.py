@@ -156,7 +156,7 @@ class ModelParameterLogger(TensorBoardTask):
 
         scalar_summaries = [tf.summary.scalar(p.pathname, tf.reshape(p.constrained_tensor, []))
                 for p in scalar_params]
-        other_summaries = [tf.summary.histogram(p.full_name, p.constrained_tensor)
+        other_summaries = [tf.summary.histogram(p.pathname, p.constrained_tensor)
                 for p in other_params]
 
         return tf.summary.merge(scalar_summaries + other_summaries)

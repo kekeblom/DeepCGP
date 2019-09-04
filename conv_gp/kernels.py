@@ -145,23 +145,23 @@ def _sample_patches(HW_image, N, patch_size, patch_length):
     return out
 
 def _cluster_patches(NHWC_X, M, patch_size):
-        NHWC = NHWC_X.shape
-        patch_length = patch_size ** 2 * NHWC[3]
-        # Randomly sample images and patches.
-        patches = np.zeros((M, patch_length), dtype=settings.float_type)
-        patches_per_image = 1
-        samples_per_inducing_point = 100
-        for i in range(M * samples_per_inducing_point // patches_per_image):
-            # Sample a random image, compute the patches and sample some random patches.
-            image = _sample(NHWC_X, 1)[0]
-            sampled_patches = _sample_patches(image, patches_per_image,
-                    patch_size, patch_length)
-            patches[i*patches_per_image:(i+1)*patches_per_image] = sampled_patches
+    NHWC = NHWC_X.shape
+    patch_length = patch_size ** 2 * NHWC[3]
+    # Randomly sample images and patches.
+    patches_per_image = 1
+    samples_per_inducing_point = 100
+    patches = np.zeros((M * samples_per_inducing_point, patch_length), dtype=settings.float_type)
+    for i in range((M * samples_per_inducing_point) // patches_per_image):
+        # Sample a random image, compute the patches and sample some random patches.
+        image = _sample(NHWC_X, 1)[0]
+        sampled_patches = _sample_patches(image, patches_per_image,
+                patch_size, patch_length)
+        patches[i*patches_per_image:(i+1)*patches_per_image] = sampled_patches
 
-        k_means = cluster.KMeans(n_clusters=M,
-                init='random', n_jobs=-1)
-        k_means.fit(patches)
-        return k_means.cluster_centers_
+    k_means = cluster.KMeans(n_clusters=M,
+            init='random', n_jobs=-1)
+    k_means.fit(patches)
+    return k_means.cluster_centers_
 
 class PatchInducingFeatures(InducingPointsBase):
     @classmethod
